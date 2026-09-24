@@ -8,6 +8,11 @@ on:
     # UTC: 09:17, 15:17 and 21:17 in Minsk (UTC+3).
     - cron: '17 6,12,18 * * *'
   workflow_dispatch:
+    inputs:
+      send_sample:
+        description: 'Send one matching apartment as a test notification'
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -39,7 +44,7 @@ jobs:
             echo 'ready=true' >> "$GITHUB_OUTPUT"
           fi
       - name: Send one sample apartment
-        if: github.event_name == 'push' && github.event.head_commit.message == 'Send sample apartment to Telegram' && steps.config.outputs.ready == 'true'
+        if: inputs.send_sample == true && steps.config.outputs.ready == 'true'
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -62,9 +67,10 @@ jobs:
           if not matches_now:
               raise SystemExit('No matching Onliner apartment is available for the sample')
           item = max(matches_now, key=lambda apartment: apartment.published_at)
+          print(f'Test listing {item.key}: {item.url}', flush=True)
           telegram_send(os.environ['TELEGRAM_BOT_TOKEN'], os.environ['TELEGRAM_CHAT_ID'],
                         replace(item, address='ТЕСТ · ' + item.address))
-          print(f'Sent sample listing {item.key}: {item.url}')
+          print(f'Sent sample listing {item.key}')
           PY
       - name: Check listings and send alerts
         if: steps.config.outputs.ready == 'true'
