@@ -10,7 +10,7 @@ Checks Onlíner and Realt for newly published long-term rental apartments in Min
 
 `SEARCH_CENTER_LAT`, `SEARCH_CENTER_LON`, `SEARCH_RADIUS_KM`: center and straight-line radius. The current center is the metro station, approximately `53.915833, 27.583333`, with a radius of `3`. If a precise studio address is provided, replace the center coordinates. Alternatively, `AREA_POLYGON` accepts a JSON array of map corners in `[longitude,latitude]` order. Apartments without coordinates are skipped.
 
-`TELEGRAM_BOT_TOKEN`: secret from BotFather. `TELEGRAM_CHAT_ID`: the ID of the private chat that sent `/start` to the bot; this differs from the bot's own ID. To find it, after sending `/start`, open `https://api.telegram.org/bot<TOKEN>/getUpdates` privately and copy `message.chat.id`. Do not post the token publicly or commit it to GitHub. The bot does not listen for commands; change filters in configuration.
+`TELEGRAM_BOT_TOKEN`: secret from BotFather. `TELEGRAM_CHAT_ID`: the numeric ID of your own private chat after you send `/start` to the bot; this differs from the bot's own ID. If your bot manager shows a list of registered users, you may find your Telegram user/chat ID there. Otherwise obtain it privately through the Telegram Bot API. Do not post the token publicly or commit it to GitHub. The bot does not listen for commands; change filters in configuration.
 
 ## Free GitHub Actions deployment
 
