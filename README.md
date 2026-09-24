@@ -12,16 +12,24 @@ Checks Onlíner and Realt for newly published long-term rental apartments in Min
 
 `TELEGRAM_BOT_TOKEN`: secret from BotFather. `TELEGRAM_CHAT_ID`: the ID of the private chat that sent `/start` to the bot; this differs from the bot's own ID. To find it, after sending `/start`, open `https://api.telegram.org/bot<TOKEN>/getUpdates` privately and copy `message.chat.id`. Do not post the token publicly or commit it to GitHub. The bot does not listen for commands; change filters in configuration.
 
+## Free GitHub Actions deployment
+
+This public repository uses standard GitHub-hosted runners, which are free for public repositories. The workflow `.github/workflows/monitor.yml` runs at **09:17, 15:17 and 21:17 Minsk time**, and can also be run manually from the **Actions** tab. GitHub sometimes delays or drops scheduled runs at busy times; the 17th minute reduces that risk. This is a best-effort schedule, not an exact-time guarantee.
+
+To activate it without editing code:
+
+1. Open **Settings → Secrets and variables → Actions → New repository secret**.
+2. Add `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` as two separate repository secrets. Never put either value in a file or commit message.
+3. Open **Actions → Check new apartments → Run workflow**. The first successful run builds the baseline without sending old listings. Future runs send only new matches. Check the logs of that first run for both provider success messages.
+
+The workflow writes `state.json` to the repository after each run. It contains listing IDs and a last-check timestamp, **not bot credentials**. This repository is public, so the IDs are public as well. Each successful run creates a state commit; this keeps a history of checks and avoids GitHub's 60-day no-activity disabling of scheduled workflows. If a scheduled run is dropped, the next run still scans listings published within the last 24 hours. After a longer outage, some short-lived listings may be missed. This design needs no paid hosting or external database.
+
 ## Local / Debian deployment
 
-Copy `.env.example` to `.env`, fill the two Telegram values (and adjust the search if desired), then run `docker compose up -d --build`. The container seeds the initial baseline at startup and checks every day at **09:00, 15:00 and 21:00 Minsk time**. SQLite persists in `./data` via a bind mount. Run `docker compose logs -f monitor` to check results. To inspect matches without changing state or sending messages: `docker compose run --rm monitor python monitor.py --dry-run`.
+Copy `.env.example` to `.env`, fill the two Telegram values (and adjust the search if desired), then run `docker compose up -d --build`. The container seeds the initial baseline at startup and checks every day at **09:00, 15:00 and 21:00 Minsk time**. The JSON state file persists in `./data` via a bind mount. Run `docker compose logs -f monitor` to check results. To inspect matches without changing state or sending messages: `docker compose run --rm monitor python monitor.py --dry-run`.
 
 Without Docker, install `requirements.txt`, export the same environment variables, then run `python scheduler.py` as a systemd service. Run `python monitor.py --dry-run` first to verify your area.
 
-## Render deployment
-
-The `render.yaml` Blueprint creates a cron job at **06:00, 12:00 and 18:00 UTC**, corresponding to 09:00, 15:00 and 21:00 Minsk. It also creates a **paid, persistent 256 MB Key Value** instance for listing history. Render Cron has no persistent disk, and the free Key Value plan loses its data on restart. Review Render's current prices before applying the Blueprint. Connect this repository, fill `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` in the Dashboard, then apply. The search settings are already included. The first run seeds the baseline.
-
 ## Operational limits
 
-Both sites use undocumented listing data formats that can change. A failed provider is logged and retried at the next scheduled run; if both fail, the job exits unsuccessfully. Realt's default sort is not strictly by creation date, so the monitor scans all result pages (up to 55) on each run. Onlíner sorts by creation date and stops after reaching older listings (up to 30 pages). Site access can be rate limited or blocked from a particular host. An interruption between Telegram delivery and saving a seen ID can result in one duplicate. Apartments newly posted and removed between two checks cannot be found later.
+Both sites use undocumented listing data formats that can change. A failed provider is logged and retried at the next scheduled run; if both fail, the job exits unsuccessfully. Realt's default sort is not strictly by creation date, so the monitor scans all result pages (up to 55) on each run. Onlíner sorts by creation date and stops after reaching older listings (up to 30 pages). Site access can be rate limited or blocked from a particular host. An interruption between Telegram delivery and committing `state.json` can result in one duplicate. Apartments newly posted and removed between two checks cannot be found later.

@@ -11,7 +11,6 @@ import logging
 import math
 import os
 import re
-import sqlite3
 import time
 import urllib.parse
 import urllib.request
@@ -173,30 +172,28 @@ def matches(item: Apartment, max_price_usd: float | None, max_price_byn: float |
 
 class Store:
     def __init__(self):
-        self.redis = None
-        redis_url = os.environ.get("REDIS_URL")
-        if redis_url:
-            import redis
-            self.redis = redis.Redis.from_url(redis_url, decode_responses=True)
-            self.redis.ping()
-        else:
-            path = Path(os.environ.get("SQLITE_PATH", "data/apartments.sqlite3"))
-            path.parent.mkdir(parents=True, exist_ok=True)
-            self.db = sqlite3.connect(path)
-            self.db.execute("CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY)")
-            self.db.commit()
+        self.path = Path(os.environ.get("STATE_PATH", "state.json"))
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        data = json.loads(self.path.read_text()) if self.path.exists() else {}
+        self.seen = set(data.get("seen", []))
+        self.checked_at = data.get("checked_at")
 
     def has(self, key: str) -> bool:
-        if self.redis:
-            return bool(self.redis.exists("apartment:" + key))
-        return self.db.execute("SELECT 1 FROM state WHERE key = ?", (key,)).fetchone() is not None
+        return key in self.seen
 
     def add(self, key: str):
-        if self.redis:
-            self.redis.set("apartment:" + key, "1")
-        else:
-            self.db.execute("INSERT OR IGNORE INTO state(key) VALUES (?)", (key,))
-            self.db.commit()
+        self.seen.add(key)
+        self.save()
+
+    def touch(self):
+        self.checked_at = datetime.now(timezone.utc).isoformat()
+        self.save()
+
+    def save(self):
+        temp = self.path.with_name(self.path.name + ".tmp")
+        temp.write_text(json.dumps({"checked_at": self.checked_at, "seen": sorted(self.seen)},
+                                   ensure_ascii=False, indent=2) + "\n")
+        temp.replace(self.path)
 
 
 def telegram_send(token: str, chat_id: str, item: Apartment):
@@ -266,6 +263,8 @@ def main():
             LOG.info("Initialized %s baseline; future new listings will be sent", source)
     if successes == 0:
         raise SystemExit("Both sources failed")
+    if store is not None:
+        store.touch()
 
 
 if __name__ == "__main__":

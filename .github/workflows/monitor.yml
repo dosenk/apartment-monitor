@@ -1,0 +1,60 @@
+name: Check new apartments
+
+on:
+  schedule:
+    # UTC: 09:17, 15:17 and 21:17 in Minsk (UTC+3).
+    - cron: '17 6,12,18 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apartment-monitor
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - name: Check Telegram configuration
+        id: config
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
+            echo 'ready=false' >> "$GITHUB_OUTPUT"
+            echo 'Waiting for TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID repository secrets.'
+          else
+            echo 'ready=true' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Check listings and send alerts
+        if: steps.config.outputs.ready == 'true'
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          PRICE_MAX_USD: '500'
+          SEARCH_CENTER_LAT: '53.915833'
+          SEARCH_CENTER_LON: '27.583333'
+          SEARCH_RADIUS_KM: '3'
+          STATE_PATH: state.json
+        run: python monitor.py
+      - name: Persist seen listings
+        if: always() && steps.config.outputs.ready == 'true'
+        run: |
+          if [ -f state.json ]; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add state.json
+            if ! git diff --cached --quiet; then
+              git commit -m 'Update apartment monitor state [skip ci]'
+              git push origin HEAD:main
+            fi
+          fi

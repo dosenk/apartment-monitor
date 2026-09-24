@@ -38,16 +38,16 @@ class MonitorTests(unittest.TestCase):
         self.assertTrue(monitor.matches(item, 500, None, set(), None, (53.9, 27.6), 3))
         self.assertFalse(monitor.matches(item, 500, None, set(), None, (53.95, 27.6), 3))
 
-    def test_sqlite_seen_survives_reopen(self):
+    def test_seen_state_survives_reopen(self):
         with tempfile.TemporaryDirectory() as temp:
-            with patch.dict(os.environ, {"SQLITE_PATH": temp + "/history.db"}, clear=True):
+            with patch.dict(os.environ, {"STATE_PATH": temp + "/state.json"}, clear=True):
                 first = monitor.Store()
                 first.add("onliner:42")
-                first.db.close()
+                first.touch()
                 second = monitor.Store()
                 self.assertTrue(second.has("onliner:42"))
                 self.assertFalse(second.has("onliner:43"))
-                second.db.close()
+                self.assertIsNotNone(second.checked_at)
 
 
 if __name__ == "__main__":
