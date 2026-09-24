@@ -1,6 +1,9 @@
 name: Check new apartments
 
 on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/monitor.yml']
   schedule:
     # UTC: 09:17, 15:17 and 21:17 in Minsk (UTC+3).
     - cron: '17 6,12,18 * * *'
