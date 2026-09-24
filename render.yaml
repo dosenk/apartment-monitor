@@ -1,0 +1,34 @@
+services:
+  - type: keyvalue
+    name: apartment-monitor-history
+    plan: starter
+    region: frankfurt
+    maxmemoryPolicy: noeviction
+    ipAllowList: []
+
+  - type: cron
+    name: apartment-monitor
+    runtime: python
+    plan: starter
+    region: frankfurt
+    schedule: "0 6,12,18 * * *"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python monitor.py
+    envVars:
+      - key: REDIS_URL
+        fromService:
+          name: apartment-monitor-history
+          type: keyvalue
+          property: connectionString
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: PRICE_MAX_USD
+        value: "500"
+      - key: SEARCH_CENTER_LAT
+        value: "53.915833"
+      - key: SEARCH_CENTER_LON
+        value: "27.583333"
+      - key: SEARCH_RADIUS_KM
+        value: "3"
