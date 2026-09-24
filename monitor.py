@@ -15,7 +15,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -197,11 +197,7 @@ class Store:
         temp.replace(self.path)
 
 
-def telegram_send(token: str, chat_id: str, item: Apartment):
-    message = (f"🏠 {item.rooms or '?'} комн. · {html.escape(item.source.title())}\n"
-        f"📍 {html.escape(item.address)}\n"
-        f"💰 ${item.price_usd:g} / {item.price_byn:g} BYN в месяц\n"
-        f"🔗 {html.escape(item.url)}")
+def telegram_send_text(token: str, chat_id: str, message: str):
     data = urllib.parse.urlencode({"chat_id": chat_id, "text": message, "parse_mode": "HTML", "disable_web_page_preview": "true"}).encode()
     request = urllib.request.Request(f"https://api.telegram.org/bot{token}/sendMessage", data=data)
     try:
@@ -218,9 +214,18 @@ def telegram_send(token: str, chat_id: str, item: Apartment):
         raise RuntimeError("Telegram rejected message")
 
 
+def telegram_send(token: str, chat_id: str, item: Apartment):
+    message = (f"🏠 {item.rooms or '?'} комн. · {html.escape(item.source.title())}\n"
+        f"📍 {html.escape(item.address)}\n"
+        f"💰 ${item.price_usd:g} / {item.price_byn:g} BYN в месяц\n"
+        f"🔗 {html.escape(item.url)}")
+    telegram_send_text(token, chat_id, message)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry-run", action="store_true", help="Fetch/filter and print listings without sending or saving")
+    parser.add_argument("--send-samples", action="store_true", help="Send one matching test listing from each source without changing state")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     max_price_usd = float(os.environ["PRICE_MAX_USD"]) if os.environ.get("PRICE_MAX_USD") else None
@@ -242,10 +247,12 @@ def main():
     chat_id = os.environ.get("TELEGRAM_CHAT_ID")
     if not args.dry_run and (not token or not chat_id):
         raise ValueError("TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are required")
-    store = None if args.dry_run else Store()
+    store = None if args.dry_run or args.send_samples else Store()
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(hours=24)
     successes = 0
+    sent_count = 0
+    sample_sources = set()
     for source, fetch in (("onliner", fetch_onliner), ("realt", fetch_realt)):
         try:
             entries = fetch(cutoff)
@@ -259,6 +266,15 @@ def main():
             for item in filtered:
                 print(f"{item.key} | ${item.price_usd:g} | {item.price_byn:g} BYN | {item.address} | {item.url}")
             continue
+        if args.send_samples:
+            if filtered:
+                item = filtered[-1]
+                telegram_send(token, chat_id, replace(item, address="ТЕСТ · " + item.address))
+                LOG.info("Sent sample %s: %s", item.key, item.url)
+                sample_sources.add(source)
+            else:
+                LOG.error("No matching %s listing available for the sample", source)
+            continue
         bootstrapped = store.has("bootstrap:" + source)
         for item in filtered:
             if store.has(item.key):
@@ -266,14 +282,29 @@ def main():
             if bootstrapped:
                 telegram_send(token, chat_id, item)
                 LOG.info("Sent %s", item.key)
+                sent_count += 1
             store.add(item.key)
         if not bootstrapped:
             store.add("bootstrap:" + source)
             LOG.info("Initialized %s baseline; future new listings will be sent", source)
+    if args.send_samples:
+        if sample_sources != {"onliner", "realt"}:
+            raise SystemExit("Could not send a sample from both Onlíner and Realt")
+        return
     if successes == 0:
         raise SystemExit("Both sources failed")
     if store is not None:
         store.touch()
+        if os.environ.get("SEND_EMPTY_STATUS") == "true":
+            if successes == 2 and sent_count == 0:
+                telegram_send_text(token, chat_id,
+                    "🏠 Новых объявлений нет. Проверил Onlíner и Realt: до $500, "
+                    "в радиусе 3 км от метро Площадь Якуба Коласа.")
+                LOG.info("Sent morning no-new-listings status")
+            elif successes < 2:
+                telegram_send_text(token, chat_id,
+                    "⚠️ Не удалось проверить оба сайта. Результат поиска за это утро неполный.")
+                LOG.warning("Sent morning incomplete-search status")
 
 
 if __name__ == "__main__":
