@@ -89,9 +89,32 @@ jobs:
           if [ -f state.json ]; then
             git config user.name 'github-actions[bot]'
             git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git add state.json
-            if ! git diff --cached --quiet; then
+            cp state.json "$RUNNER_TEMP/apartment-monitor-state.json"
+            for attempt in 1 2 3; do
+              git fetch origin main
+              git reset --hard origin/main
+              python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          candidate = json.loads((Path(os.environ['RUNNER_TEMP']) / 'apartment-monitor-state.json').read_text())
+          path = Path('state.json')
+          current = json.loads(path.read_text()) if path.exists() else {}
+          merged = {
+              'checked_at': max(filter(None, (current.get('checked_at'), candidate.get('checked_at'))), default=None),
+              'seen': sorted(set(current.get('seen', [])) | set(candidate.get('seen', []))),
+          }
+          path.write_text(json.dumps(merged, ensure_ascii=False, indent=2) + '\n')
+          PY
+              git add state.json
+              if git diff --cached --quiet; then
+                exit 0
+              fi
               git commit -m 'Update apartment monitor state [skip ci]'
-              git push origin HEAD:main
-            fi
+              if git push origin HEAD:main; then
+                exit 0
+              fi
+            done
+            exit 1
           fi
