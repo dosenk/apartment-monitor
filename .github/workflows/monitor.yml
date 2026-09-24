@@ -38,6 +38,34 @@ jobs:
           else
             echo 'ready=true' >> "$GITHUB_OUTPUT"
           fi
+      - name: Send one sample apartment
+        if: github.event_name == 'push' && github.event.head_commit.message == 'Send sample apartment to Telegram' && steps.config.outputs.ready == 'true'
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          PRICE_MAX_USD: '500'
+          SEARCH_CENTER_LAT: '53.915833'
+          SEARCH_CENTER_LON: '27.583333'
+          SEARCH_RADIUS_KM: '3'
+        run: |
+          python - <<'PY'
+          import os
+          from dataclasses import replace
+          from datetime import datetime, timedelta, timezone
+          from monitor import fetch_onliner, matches, telegram_send
+
+          center = (float(os.environ['SEARCH_CENTER_LAT']), float(os.environ['SEARCH_CENTER_LON']))
+          listings = fetch_onliner(datetime.now(timezone.utc) - timedelta(hours=24))
+          matches_now = [item for item in listings if matches(
+              item, float(os.environ['PRICE_MAX_USD']), None, set(), None,
+              center, float(os.environ['SEARCH_RADIUS_KM']))]
+          if not matches_now:
+              raise SystemExit('No matching Onliner apartment is available for the sample')
+          item = max(matches_now, key=lambda apartment: apartment.published_at)
+          telegram_send(os.environ['TELEGRAM_BOT_TOKEN'], os.environ['TELEGRAM_CHAT_ID'],
+                        replace(item, address='ТЕСТ · ' + item.address))
+          print(f'Sent sample listing {item.key}: {item.url}')
+          PY
       - name: Check listings and send alerts
         if: steps.config.outputs.ready == 'true'
         env:
