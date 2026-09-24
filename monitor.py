@@ -12,6 +12,7 @@ import math
 import os
 import re
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
@@ -203,8 +204,16 @@ def telegram_send(token: str, chat_id: str, item: Apartment):
         f"🔗 {html.escape(item.url)}")
     data = urllib.parse.urlencode({"chat_id": chat_id, "text": message, "parse_mode": "HTML", "disable_web_page_preview": "true"}).encode()
     request = urllib.request.Request(f"https://api.telegram.org/bot{token}/sendMessage", data=data)
-    with urllib.request.urlopen(request, timeout=20) as response:
-        result = json.load(response)
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            result = json.load(response)
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 404):
+            raise RuntimeError(
+                "Telegram rejected TELEGRAM_BOT_TOKEN. Copy the API token from @BotFather, "
+                "not the bot ID or username."
+            ) from None
+        raise
     if not result.get("ok"):
         raise RuntimeError("Telegram rejected message")
 
