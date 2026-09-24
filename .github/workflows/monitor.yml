@@ -6,11 +6,12 @@ on:
     paths: ['.github/workflows/monitor.yml']
   schedule:
     # UTC: 09:17, 15:17 and 21:17 in Minsk (UTC+3).
-    - cron: '17 6,12,18 * * *'
+    - cron: '17 6 * * *'
+    - cron: '17 12,18 * * *'
   workflow_dispatch:
     inputs:
       send_sample:
-        description: 'Send one matching apartment as a test notification'
+        description: 'Send one test apartment from each website'
         type: boolean
         default: false
 
@@ -43,8 +44,8 @@ jobs:
           else
             echo 'ready=true' >> "$GITHUB_OUTPUT"
           fi
-      - name: Send one sample apartment
-        if: inputs.send_sample == true && steps.config.outputs.ready == 'true'
+      - name: Send two sample apartments
+        if: steps.config.outputs.ready == 'true' && (inputs.send_sample == true || (github.event_name == 'push' && github.event.head_commit.message == 'Send Onliner and Realt sample listings'))
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -52,28 +53,9 @@ jobs:
           SEARCH_CENTER_LAT: '53.915833'
           SEARCH_CENTER_LON: '27.583333'
           SEARCH_RADIUS_KM: '3'
-        run: |
-          python - <<'PY'
-          import os
-          from dataclasses import replace
-          from datetime import datetime, timedelta, timezone
-          from monitor import fetch_onliner, matches, telegram_send
-
-          center = (float(os.environ['SEARCH_CENTER_LAT']), float(os.environ['SEARCH_CENTER_LON']))
-          listings = fetch_onliner(datetime.now(timezone.utc) - timedelta(hours=24))
-          matches_now = [item for item in listings if matches(
-              item, float(os.environ['PRICE_MAX_USD']), None, set(), None,
-              center, float(os.environ['SEARCH_RADIUS_KM']))]
-          if not matches_now:
-              raise SystemExit('No matching Onliner apartment is available for the sample')
-          item = max(matches_now, key=lambda apartment: apartment.published_at)
-          print(f'Test listing {item.key}: {item.url}', flush=True)
-          telegram_send(os.environ['TELEGRAM_BOT_TOKEN'], os.environ['TELEGRAM_CHAT_ID'],
-                        replace(item, address='ТЕСТ · ' + item.address))
-          print(f'Sent sample listing {item.key}')
-          PY
+        run: python monitor.py --send-samples
       - name: Check listings and send alerts
-        if: steps.config.outputs.ready == 'true'
+        if: steps.config.outputs.ready == 'true' && !(github.event_name == 'push' && github.event.head_commit.message == 'Send Onliner and Realt sample listings')
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -82,6 +64,7 @@ jobs:
           SEARCH_CENTER_LON: '27.583333'
           SEARCH_RADIUS_KM: '3'
           STATE_PATH: state.json
+          SEND_EMPTY_STATUS: ${{ github.event_name == 'schedule' && github.event.schedule == '17 6 * * *' }}
         run: python monitor.py
       - name: Persist seen listings
         if: always() && steps.config.outputs.ready == 'true'
