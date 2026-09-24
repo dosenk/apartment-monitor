@@ -49,6 +49,33 @@ class MonitorTests(unittest.TestCase):
                 self.assertFalse(second.has("onliner:43"))
                 self.assertIsNotNone(second.checked_at)
 
+    def test_morning_reports_no_new_only_after_both_sources_succeed(self):
+        item = monitor.Apartment("onliner", "42", "https://r.onliner.by/ak/apartments/42",
+                                 "Минск", 1400, 1, 53.915, 27.583,
+                                 datetime.now(timezone.utc), 450)
+        with tempfile.TemporaryDirectory() as temp:
+            env = {"STATE_PATH": temp + "/state.json", "TELEGRAM_BOT_TOKEN": "test",
+                   "TELEGRAM_CHAT_ID": "123", "PRICE_MAX_USD": "500",
+                   "SEARCH_CENTER_LAT": "53.915833", "SEARCH_CENTER_LON": "27.583333",
+                   "SEARCH_RADIUS_KM": "3", "SEND_EMPTY_STATUS": "true"}
+            with patch.dict(os.environ, env, clear=True), patch("sys.argv", ["monitor.py"]), \
+                    patch.object(monitor, "telegram_send"), patch.object(monitor, "telegram_send_text") as status:
+                store = monitor.Store()
+                store.add("bootstrap:onliner")
+                store.add("bootstrap:realt")
+                store.add(item.key)
+                with patch.object(monitor, "fetch_onliner", return_value=[item]), \
+                        patch.object(monitor, "fetch_realt", return_value=[]):
+                    monitor.main()
+                    status.assert_called_once()
+                    self.assertIn("Новых объявлений нет", status.call_args.args[2])
+                status.reset_mock()
+                with patch.object(monitor, "fetch_onliner", return_value=[item]), \
+                        patch.object(monitor, "fetch_realt", side_effect=RuntimeError("site unavailable")):
+                    monitor.main()
+                    status.assert_called_once()
+                    self.assertIn("неполный", status.call_args.args[2])
+
 
 if __name__ == "__main__":
     unittest.main()
