@@ -119,7 +119,7 @@ def fetch_onliner(cutoff: datetime, max_pages: int = 30) -> list[Apartment]:
     return listings
 
 
-def fetch_realt(cutoff: datetime, max_pages: int = 55) -> list[Apartment]:
+def fetch_realt(cutoff: datetime, max_pages: int = 100) -> list[Apartment]:
     listings = []
     page = 1
     while page <= max_pages:
