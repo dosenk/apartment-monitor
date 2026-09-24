@@ -1,7 +1,7 @@
 services:
   - type: keyvalue
     name: apartment-monitor-history
-    plan: starter
+    plan: 256mb
     region: frankfurt
     maxmemoryPolicy: noeviction
     ipAllowList: []

@@ -20,7 +20,7 @@ Without Docker, install `requirements.txt`, export the same environment variable
 
 ## Render deployment
 
-The `render.yaml` Blueprint creates a cron job at **06:00, 12:00 and 18:00 UTC**, corresponding to 09:00, 15:00 and 21:00 Minsk. It also creates a **paid, persistent Key Value** instance for listing history. Render Cron has no persistent disk, and the free Key Value plan loses its data on restart. Review Render's current prices before applying the Blueprint. Connect this repository, fill `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` in the Dashboard, then apply. The search settings are already included. The first run seeds the baseline.
+The `render.yaml` Blueprint creates a cron job at **06:00, 12:00 and 18:00 UTC**, corresponding to 09:00, 15:00 and 21:00 Minsk. It also creates a **paid, persistent 256 MB Key Value** instance for listing history. Render Cron has no persistent disk, and the free Key Value plan loses its data on restart. Review Render's current prices before applying the Blueprint. Connect this repository, fill `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` in the Dashboard, then apply. The search settings are already included. The first run seeds the baseline.
 
 ## Operational limits
 
