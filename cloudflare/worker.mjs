@@ -9,7 +9,10 @@ async function fetchPage(url, parser) {
     { 'User-Agent': 'Mozilla/5.0 Chrome/131.0 Safari/537.36', Accept: 'application/json', Referer: 'https://re.kufar.by/' } :
     { 'User-Agent': AGENT, Accept: 'application/json,text/html' };
   const response = await fetch(url, { headers, signal: AbortSignal.timeout(25000) });
-  if (!response.ok) throw Error(`Source HTTP ${response.status}: ${new URL(url).hostname}`);
+  if (!response.ok) {
+    const detail = (await response.text()).replace(/\s+/g, ' ').slice(0, 240);
+    throw Error(`Source HTTP ${response.status}: ${new URL(url).hostname}; server=${response.headers.get('server')}; type=${response.headers.get('content-type')}; detail=${detail}`);
+  }
   return parser(parser === realt ? await response.text() : await response.json());
 }
 
