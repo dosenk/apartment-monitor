@@ -34,7 +34,7 @@ jobs:
               with urllib.request.urlopen(urllib.request.Request(list_url, headers={'Authorization': 'Bearer ' + os.environ['CLOUDFLARE_API_TOKEN']}), timeout=30) as response:
                   listed = json.load(response)['result']
               instances = listed if isinstance(listed, list) else listed.get('instances', [])
-              print('Recent instances:', [(x.get('id'), x.get('status'), x.get('params')) for x in instances[:20]])
+              print('Recent instances:', [(x.get('id'), x.get('status'), x.get('created_on'), x.get('params')) for x in instances[:20]])
               ident = instances[0]['id']
           url = f'https://api.cloudflare.com/client/v4/accounts/{account}/workflows/apartment-monitor-scan/instances/{ident}'
           request = urllib.request.Request(url, headers={'Authorization': 'Bearer ' + os.environ['CLOUDFLARE_API_TOKEN']})
@@ -46,7 +46,7 @@ jobs:
               for attempt in step.get('attempts', [])[-1:]:
                   if attempt.get('error'):
                       print('  Error:', attempt['error'])
-          query = {'sql': "SELECT key, value FROM state WHERE key = 'covered_until'"}
+          query = {'sql': "SELECT key, value FROM meta WHERE key = 'covered_until'"}
           db_url = f'https://api.cloudflare.com/client/v4/accounts/{account}/d1/database/de6cf25d-f1df-483e-a3c2-a0556028b735/query'
           db_req = urllib.request.Request(db_url, data=json.dumps(query).encode(), headers={'Authorization': 'Bearer ' + os.environ['CLOUDFLARE_API_TOKEN'], 'Content-Type': 'application/json'})
           with urllib.request.urlopen(db_req, timeout=30) as response:
