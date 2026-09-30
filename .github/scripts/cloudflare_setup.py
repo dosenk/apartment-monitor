@@ -28,11 +28,18 @@ config = {
     'compatibility_date': '2026-09-30',
     'workers_dev': True,
     'd1_databases': [{'binding': 'DB', 'database_name': 'apartment-monitor-state', 'database_id': db['uuid']}],
+    'services': [{'binding': 'PAGE_FETCH', 'service': 'apartment-monitor-fetch'}],
     'triggers': {'crons': ['0 6 * * *', '0 11 * * *', '0 19 * * *']},
     'workflows': [{'name': 'apartment-monitor-scan', 'binding': 'SCAN',
                    'class_name': 'ApartmentScan'}],
 }
 Path('wrangler.jsonc').write_text(json.dumps(config, indent=2) + '\n')
+Path('wrangler-fetcher.jsonc').write_text(json.dumps({
+    'name': 'apartment-monitor-fetch',
+    'main': 'cloudflare/fetcher.mjs',
+    'compatibility_date': '2026-09-30',
+    'workers_dev': False,
+}, indent=2) + '\n')
 state = json.loads(Path('state.json').read_text()) if Path('state.json').exists() else {}
 def quote(value):
     return "'" + str(value).replace("'", "''") + "'"
