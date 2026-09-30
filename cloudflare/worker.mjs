@@ -109,6 +109,11 @@ export class ApartmentScan extends WorkflowEntrypoint {
 }
 
 export default {
+  async scheduled(controller, env, ctx) {
+    const kind = { '0 6 * * *': 'morning', '0 11 * * *': 'midday', '0 19 * * *': 'evening' }[controller.cron];
+    if (!kind) throw Error(`Unexpected Cron Trigger: ${controller.cron}`);
+    ctx.waitUntil(env.SCAN.create({ params: { kind, requestedAt: controller.scheduledTime } }));
+  },
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname === '/health' && request.method === 'GET') return Response.json({ ok: true });
