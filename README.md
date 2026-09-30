@@ -1,6 +1,16 @@
 # Apartment monitor
 
-Checks Onlíner and Realt for newly published long-term rental apartments in Minsk and sends matches to a private Telegram chat. The configured search covers a **3 km straight-line radius around Ploshcha Yakuba Kolasa metro station** and listings at **$500 USD per month or less**, with any room count. These coordinates are an approximate station center, not the verified location of the Rassvetay studio. The original listing feeds provide their own USD conversions; the monitor does not rely on a hard-coded exchange rate. It remembers listing IDs, so a listing is sent once. The first successful run for each site seeds the baseline without sending old listings. Later runs send only listings published within the last 24 hours that were not already sent.
+Checks Onlíner, Realt and Kufar for newly published long-term rental apartments in Minsk and sends matches to a private Telegram chat. The configured search covers a **3 km straight-line radius around Ploshcha Yakuba Kolasa metro station** and listings at **$500 USD per month or less**, with any room count. These coordinates are an approximate station center, not the verified location of the Rassvetay studio. Listing feeds provide USD conversions; the monitor does not rely on a hard-coded exchange rate. It remembers sent listing IDs.
+
+Only listings with publication timestamps in the selected half-open Minsk-time interval are sent:
+
+| Scan | Publication interval |
+| --- | --- |
+| 09:00 | Previous day 22:00 to 09:00 |
+| 14:00 | 09:00 to 14:00 |
+| 22:00 | 14:00 to 22:00 |
+
+An empty window produces no Telegram message. A manual `--window current` run scans today's 14:00 to the current time (or to 22:00 if it runs later), without repeating IDs already delivered.
 
 ## Configuration
 
@@ -14,22 +24,22 @@ Checks Onlíner and Realt for newly published long-term rental apartments in Min
 
 ## Free GitHub Actions deployment
 
-This public repository uses standard GitHub-hosted runners, which are free for public repositories. The workflow `.github/workflows/monitor.yml` runs at **09:17, 15:17 and 21:17 Minsk time**, and can also be run manually from the **Actions** tab. GitHub sometimes delays or drops scheduled runs at busy times; the 17th minute reduces that risk. This is a best-effort schedule, not an exact-time guarantee.
+This public repository uses standard GitHub-hosted runners, which are free for public repositories. The workflow `.github/workflows/monitor.yml` requests runs at **09:00, 14:00 and 22:00 Minsk time**, and can also be run manually from the **Actions** tab with a selected publishing window. GitHub has delayed this repository's scheduled jobs by hours before, so these are best-effort times; a different free scheduler is needed if the delivery time itself must be reliable. The publishing intervals remain fixed even when GitHub starts a job late.
 
 To activate it without editing code:
 
 1. Open **Settings → Secrets and variables → Actions → New repository secret**.
 2. Add `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` as two separate repository secrets. Never put either value in a file or commit message.
-3. Open **Actions → Check new apartments → Run workflow**. The first successful run builds the baseline without sending old listings. Future runs send only new matches. Check the logs of that first run for both provider success messages.
+3. Open **Actions → Check new apartments → Run workflow**, select a window, and inspect the job log for all three source results. A manual `current` scan is intended for the 14:00–22:00 interval.
 
-The workflow writes `state.json` to the repository after each run. It contains listing IDs and a last-check timestamp, **not bot credentials**. This repository is public, so the IDs are public as well. Each successful run creates a state commit; this keeps a history of checks and avoids GitHub's 60-day no-activity disabling of scheduled workflows. If a scheduled run is dropped, the next run still scans listings published within the last 24 hours. After a longer outage, some short-lived listings may be missed. This design needs no paid hosting or external database.
+The workflow writes `state.json` to the repository after each run. It contains sent listing IDs and a last-check timestamp, **not bot credentials**. This repository is public, so the IDs are public as well. Each successful run creates a state commit; this keeps a history of checks and avoids GitHub's 60-day no-activity disabling of scheduled workflows. If a scheduled job is dropped and the next job only scans its own window, listings from the dropped window are missed. This design needs no paid hosting or external database.
 
 ## Local / Debian deployment
 
-Copy `.env.example` to `.env`, fill the two Telegram values (and adjust the search if desired), then run `docker compose up -d --build`. The container seeds the initial baseline at startup and checks every day at **09:00, 15:00 and 21:00 Minsk time**. The JSON state file persists in `./data` via a bind mount. Run `docker compose logs -f monitor` to check results. To inspect matches without changing state or sending messages: `docker compose run --rm monitor python monitor.py --dry-run`.
+Copy `.env.example` to `.env`, fill the two Telegram values (and adjust the search if desired), then run `docker compose up -d --build`. The container checks every day at **09:00, 14:00 and 22:00 Minsk time**. The JSON state file persists in `./data` via a bind mount. Run `docker compose logs -f monitor` to check results. To inspect an interval without changing state or sending messages: `docker compose run --rm monitor python monitor.py --dry-run --window evening`.
 
-Without Docker, install `requirements.txt`, export the same environment variables, then run `python scheduler.py` as a systemd service. Run `python monitor.py --dry-run` first to verify your area.
+Without Docker, install `requirements.txt`, export the same environment variables, then run `python scheduler.py` as a systemd service. Run `python monitor.py --dry-run --window evening` first to verify your area.
 
 ## Operational limits
 
-Both sites use undocumented listing data formats that can change. A failed provider is logged and retried at the next scheduled run; if both fail, the job exits unsuccessfully. Realt's default sort is not strictly by creation date, so the monitor scans all result pages (up to 100) on each run. Onlíner sorts by creation date and stops after reaching older listings (up to 30 pages). Site access can be rate limited or blocked from a particular host. An interruption between Telegram delivery and committing `state.json` can result in one duplicate. Apartments newly posted and removed between two checks cannot be found later.
+All three sites use undocumented listing data formats that can change. A failed provider makes the job fail after completed sources are processed. Realt's default sort is not strictly by creation date, so the monitor scans all result pages (up to 100) on each run. Onlíner and Kufar sort by listing time and stop at older listings (up to 30 and 100 pages respectively). Site access can be rate limited or blocked from a particular host. An interruption between Telegram delivery and committing `state.json` can result in one duplicate. Apartments newly posted and removed between two checks cannot be found later.
