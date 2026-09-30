@@ -3,6 +3,7 @@ name: Check new apartments
 on:
   push:
     branches: [main]
+    # Only an intentional push of this file with the special commit message starts a scan.
     paths: ['.github/workflows/monitor.yml']
   schedule:
     # UTC; Minsk is UTC+3 year-round.
