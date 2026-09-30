@@ -1,8 +1,12 @@
 {
-  "checked_at": "2026-09-30T12:31:19.578690+00:00",
+  "checked_at": "2026-09-30T15:43:31.925275+00:00",
   "seen": [
     "bootstrap:onliner",
     "bootstrap:realt",
+    "kufar:1085207546",
+    "kufar:1086098800",
+    "kufar:1086212192",
+    "kufar:1087015420",
     "onliner:975712",
     "onliner:975718",
     "onliner:975726",
@@ -28,6 +32,7 @@
     "realt:4242708",
     "realt:4242997",
     "realt:4243435",
-    "realt:4245825"
+    "realt:4245825",
+    "realt:4245971"
   ]
 }
