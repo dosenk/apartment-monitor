@@ -254,6 +254,7 @@ class Store:
         data = json.loads(self.path.read_text()) if self.path.exists() else {}
         self.seen = set(data.get("seen", []))
         self.checked_at = data.get("checked_at")
+        self.covered_until = data.get("covered_until")
 
     def has(self, key: str) -> bool:
         return key in self.seen
@@ -262,13 +263,16 @@ class Store:
         self.seen.add(key)
         self.save()
 
-    def touch(self):
+    def touch(self, covered_until: datetime | None = None):
         self.checked_at = datetime.now(timezone.utc).isoformat()
+        if covered_until is not None:
+            self.covered_until = covered_until.isoformat()
         self.save()
 
     def save(self):
         temp = self.path.with_name(self.path.name + ".tmp")
-        temp.write_text(json.dumps({"checked_at": self.checked_at, "seen": sorted(self.seen)},
+        temp.write_text(json.dumps({"checked_at": self.checked_at, "covered_until": self.covered_until,
+                                   "seen": sorted(self.seen)},
                                    ensure_ascii=False, indent=2) + "\n")
         temp.replace(self.path)
 
@@ -295,6 +299,24 @@ def telegram_send_text(token: str, chat_id: str, message: str):
                   "parse_mode": "HTML", "disable_web_page_preview": "true"})
 
 
+def interval_label(start: datetime, end: datetime) -> str:
+    def fmt(value: datetime) -> str:
+        return value.astimezone(MINSK).strftime("%d.%m.%Y %H:%M")
+    return f"с {fmt(start)} по {fmt(end)}"
+
+
+def send_interval_header(token: str, chat_id: str, start: datetime, end: datetime, count: int):
+    text = (f"🏠 Квартиры за период {interval_label(start, end)}\n"
+            f"Новых объявлений: {count}" if count else
+            f"🏠 Квартиры за период {interval_label(start, end)}\nНовых объявлений нет")
+    payload = {"chat_id": chat_id, "text": text}
+    if os.environ.get("ENABLE_CHECK_BUTTON") == "true":
+        payload["reply_markup"] = json.dumps({"inline_keyboard": [[
+            {"text": "🔄 Проверить новые квартиры", "callback_data": "check_updates"}
+        ]]}, ensure_ascii=False)
+    telegram_call(token, "sendMessage", payload)
+
+
 def telegram_send(token: str, chat_id: str, item: Apartment):
     message = (f"🏠 {item.rooms or '?'} комн. · {html.escape(item.source.title())}\n"
         f"📍 {html.escape(item.address)}\n"
@@ -315,7 +337,7 @@ def telegram_send(token: str, chat_id: str, item: Apartment):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry-run", action="store_true", help="Fetch/filter and print listings without sending or saving")
-    parser.add_argument("--window", choices=("morning", "midday", "evening", "current"),
+    parser.add_argument("--window", choices=("morning", "midday", "evening", "current", "check"),
                         default=os.environ.get("WINDOW_KIND", "current"))
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -340,10 +362,25 @@ def main():
         raise ValueError("TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are required")
     store = None if args.dry_run else Store()
     now = datetime.now(timezone.utc)
-    start, end = window_for(args.window, now)
+    if args.window == "check":
+        local = now.astimezone(MINSK)
+        slot = (22 if local.hour >= 22 else 14 if local.hour >= 14 else
+                9 if local.hour >= 9 else 22)
+        day = local if local.hour >= 9 else local - timedelta(days=1)
+        start = day.replace(hour=slot, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+        end = now
+    else:
+        start, end = window_for(args.window, now)
+    if store is not None:
+        cursor = store.covered_until or (store.checked_at if args.window == "check" else None)
+        if cursor:
+            start = datetime.fromisoformat(cursor)
+        if start >= end:
+            LOG.info("Interval already covered; no new search needed")
+            return
     LOG.info("Window %s: %s to %s", args.window, start.isoformat(), end.isoformat())
     failures = []
-    sent_count = 0
+    to_send = []
     for source, fetch in (("onliner", fetch_onliner), ("realt", fetch_realt), ("kufar", fetch_kufar)):
         try:
             entries = fetch(start)
@@ -359,16 +396,16 @@ def main():
             for item in filtered:
                 print(f"{item.key} | ${item.price_usd:g} | {item.price_byn:g} BYN | {item.address} | {item.url}")
             continue
-        for item in filtered:
-            if store.has(item.key):
-                continue
+        to_send.extend(item for item in filtered if not store.has(item.key))
+    if store is not None:
+        if not failures:
+            send_interval_header(token, chat_id, start, end, len(to_send))
+        for item in to_send:
             telegram_send(token, chat_id, item)
             LOG.info("Sent %s: %s", item.key, item.url)
             store.add(item.key)
-            sent_count += 1
-    if store is not None:
-        store.touch()
-    LOG.info("Sent %d new apartments", sent_count)
+        store.touch(end if not failures else None)
+    LOG.info("Sent %d new apartments", len(to_send))
     if failures:
         raise SystemExit("Incomplete search; failed sources: " + ", ".join(failures))
 
