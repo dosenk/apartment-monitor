@@ -46,7 +46,7 @@ export class ApartmentScan extends WorkflowEntrypoint {
     const env = this.env;
     const runId = event.payload?.runId || event.instanceId;
     let handoff = false;
-    const nextInstance = () => env.SCAN.create({ params: { runId } });
+    const nextInstance = async () => ({ id: (await env.SCAN.create({ params: { runId } })).id });
     try {
       if (!event.payload?.runId) {
         const kind = event.payload?.kind || ({ '0 6 * * *': 'morning', '0 11 * * *': 'midday', '0 19 * * *': 'evening' }[event.schedule?.cron]);
