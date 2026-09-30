@@ -2,7 +2,7 @@ import { WorkflowEntrypoint } from 'cloudflare:workers';
 import { BUTTON, interval, label, matches, onliner, realt, kufar, caption } from './logic.mjs';
 
 const AGENT = 'ApartmentMonitor/1.0 (personal rental alerts)';
-const keyboard = { inline_keyboard: [[{ text: BUTTON, callback_data: 'check_updates' }]] };
+const keyboard = { keyboard: [[{ text: BUTTON }]], resize_keyboard: true, is_persistent: true };
 const sourceHeaders = { 'User-Agent': AGENT, Accept: 'application/json,text/html' };
 
 async function fetchPage(url, parser, headers = sourceHeaders) {
@@ -120,8 +120,16 @@ export default {
       await telegram(env, 'answerCallbackQuery', { callback_query_id: update.callback_query.id, text: 'Проверяю новые квартиры…' });
       return Response.json({ ok: true, id: instance.id });
     }
-    if (String(update.message?.chat?.id) === env.TELEGRAM_CHAT_ID && update.message?.text === '/start') {
-      await telegram(env, 'sendMessage', { chat_id: env.TELEGRAM_CHAT_ID, text: 'Нажмите кнопку, чтобы проверить новые квартиры.', reply_markup: keyboard });
+    if (String(update.message?.chat?.id) !== env.TELEGRAM_CHAT_ID) return Response.json({ ok: true });
+    if (update.message?.text?.startsWith('/start')) {
+      await telegram(env, 'sendMessage', { chat_id: env.TELEGRAM_CHAT_ID,
+        text: 'Кнопка «Проверить новые квартиры» теперь внизу чата. Нажмите её для проверки.',
+        reply_markup: keyboard });
+    } else if (update.message?.text === BUTTON) {
+      const instance = await env.SCAN.create({ params: { kind: 'check', requestedAt: Date.now() } });
+      await telegram(env, 'sendMessage', { chat_id: env.TELEGRAM_CHAT_ID,
+        text: 'Проверяю новые квартиры…', reply_markup: keyboard });
+      return Response.json({ ok: true, id: instance.id });
     }
     return Response.json({ ok: true });
   },
