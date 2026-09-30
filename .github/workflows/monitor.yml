@@ -5,11 +5,6 @@ on:
     branches: [main]
     # Only an intentional push of this file with the special commit message starts a scan.
     paths: ['.github/workflows/monitor.yml']
-  schedule:
-    # UTC; Minsk is UTC+3 year-round.
-    - cron: '0 6 * * *'   # 09:00, publications 22:00–09:00
-    - cron: '0 11 * * *'  # 14:00, publications 09:00–14:00
-    - cron: '0 19 * * *'  # 22:00, publications 14:00–22:00
   workflow_dispatch:
     inputs:
       window:
