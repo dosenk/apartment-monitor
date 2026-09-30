@@ -1,0 +1,78 @@
+name: Deploy apartment monitor to Cloudflare
+
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/deploy-cloudflare.yml', '.github/scripts/cloudflare_setup.py', 'cloudflare/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloudflare-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Prepare database and migrate sent listings
+        run: |
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$TELEGRAM_BOT_TOKEN"
+          test -n "$TELEGRAM_CHAT_ID"
+          python .github/scripts/cloudflare_setup.py
+      - name: Install Wrangler
+        run: npm install --no-save wrangler@latest
+      - name: Configure D1
+        run: |
+          npx wrangler d1 execute apartment-monitor-state --remote --file cloudflare/schema.sql
+          if [ -s cloudflare/seed.sql ]; then
+            npx wrangler d1 execute apartment-monitor-state --remote --file cloudflare/seed.sql
+          fi
+      - name: Deploy Worker and Workflow
+        run: npx wrangler deploy
+      - name: Configure Worker secrets
+        run: |
+          printf '%s' "$TELEGRAM_BOT_TOKEN" | npx wrangler secret put TELEGRAM_BOT_TOKEN
+          printf '%s' "$TELEGRAM_CHAT_ID" | npx wrangler secret put TELEGRAM_CHAT_ID
+          printf '%s' "$TELEGRAM_BOT_TOKEN" | sha256sum | cut -d ' ' -f1 | npx wrangler secret put WEBHOOK_SECRET
+      - name: Test Worker and configure Telegram webhook
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          import urllib.request
+
+          account = os.environ['CLOUDFLARE_ACCOUNT_ID']
+          token = os.environ['CLOUDFLARE_API_TOKEN']
+          request = urllib.request.Request(f'https://api.cloudflare.com/client/v4/accounts/{account}/workers/subdomain',
+              headers={'Authorization': f'Bearer {token}'})
+          with urllib.request.urlopen(request, timeout=30) as response:
+              domain = json.load(response)['result']['subdomain']
+          url = f'https://apartment-monitor-bot.{domain}.workers.dev'
+          with urllib.request.urlopen(url + '/health', timeout=30) as response:
+              assert json.load(response)['ok']
+          bot = os.environ['TELEGRAM_BOT_TOKEN']
+          payload = {'url': url + '/telegram', 'secret_token': hashlib.sha256(bot.encode()).hexdigest(),
+                     'allowed_updates': ['message', 'callback_query']}
+          request = urllib.request.Request(f'https://api.telegram.org/bot{bot}/setWebhook',
+              data=json.dumps(payload).encode(), headers={'Content-Type': 'application/json'})
+          with urllib.request.urlopen(request, timeout=30) as response:
+              result = json.load(response)
+          assert result['ok'], result
+          print('Worker health verified and Telegram webhook configured:', url)
+          PY
