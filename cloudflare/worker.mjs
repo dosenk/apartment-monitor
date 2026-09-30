@@ -1,12 +1,14 @@
 import { WorkflowEntrypoint } from 'cloudflare:workers';
 import { BUTTON, interval, label, matches, onliner, realt, kufar, caption } from './logic.mjs';
 
+const AGENT = 'ApartmentMonitor/1.0 (personal rental alerts)';
 const keyboard = { keyboard: [[{ text: BUTTON }]], resize_keyboard: true, is_persistent: true };
 
-async function fetchPage(env, url, parser) {
-  const response = await env.PAGE_FETCH.fetch(
-    `https://apartment-monitor-fetch.internal/fetch?url=${encodeURIComponent(url)}`,
-    { signal: AbortSignal.timeout(25000) });
+async function fetchPage(url, parser) {
+  const headers = new URL(url).hostname === 'api.kufar.by' ?
+    { 'User-Agent': 'Mozilla/5.0 Chrome/131.0 Safari/537.36', Accept: 'application/json', Referer: 'https://re.kufar.by/' } :
+    { 'User-Agent': AGENT, Accept: 'application/json,text/html' };
+  const response = await fetch(url, { headers, signal: AbortSignal.timeout(25000) });
   if (!response.ok) throw Error(`Source HTTP ${response.status}: ${new URL(url).hostname}`);
   return parser(parser === realt ? await response.text() : await response.json());
 }
@@ -42,70 +44,119 @@ async function acquire(env, owner) {
 export class ApartmentScan extends WorkflowEntrypoint {
   async run(event, step) {
     const env = this.env;
-    const kind = event.payload?.kind || ({ '0 6 * * *': 'morning', '0 11 * * *': 'midday', '0 19 * * *': 'evening' }[event.schedule?.cron]);
-    if (!kind) throw Error(`Unknown schedule: ${event.schedule?.cron}`);
-    const owner = event.instanceId;
-    let locked = false;
-    for (let attempt = 0; attempt < 90; attempt++) {
-      locked = await step.do(`acquire-${attempt}`, () => acquire(env, owner));
-      if (locked) break;
-      await step.sleep(`wait-${attempt}`, '20 seconds');
-    }
-    if (!locked) throw Error('Scan lock held too long');
+    const runId = event.payload?.runId || event.instanceId;
+    let handoff = false;
+    const nextInstance = () => env.SCAN.create({ params: { runId } });
     try {
-      const cursor = await step.do('read-cursor', async () => (await env.DB.prepare("SELECT value FROM meta WHERE key='covered_until'").first())?.value || null);
-      const bounds = interval(kind, event.payload?.requestedAt || event.schedule?.scheduledTime || Date.now(), cursor);
-      if (bounds.start >= bounds.end) return { skipped: true, bounds };
-      const results = [];
-      const cutoff = Date.parse(bounds.start);
+      if (!event.payload?.runId) {
+        const kind = event.payload?.kind || ({ '0 6 * * *': 'morning', '0 11 * * *': 'midday', '0 19 * * *': 'evening' }[event.schedule?.cron]);
+        if (!kind) throw Error('Unknown scan type');
+        let locked = false;
+        for (let attempt = 0; attempt < 90; attempt++) {
+          locked = await step.do(`acquire-${attempt}`, () => acquire(env, runId));
+          if (locked) break;
+          await step.sleep(`wait-${attempt}`, '20 seconds');
+        }
+        if (!locked) throw Error('Scan lock held too long');
+        const cursor = await step.do('read-cursor', async () =>
+          (await env.DB.prepare("SELECT value FROM meta WHERE key='covered_until'").first())?.value || null);
+        const bounds = interval(kind, event.payload?.requestedAt || event.schedule?.scheduledTime || Date.now(), cursor);
+        if (bounds.start >= bounds.end) return { skipped: true, bounds };
+        await step.do('init-run', () => env.DB.prepare(`INSERT OR IGNORE INTO scan_runs
+          (id,start,end,stage,page,cursor,header_sent) VALUES (?,?,?,'onliner',1,NULL,0)`)
+          .bind(runId, bounds.start, bounds.end).run());
+      } else {
+        const renewed = await step.do('renew-lock', async () => env.DB.prepare(
+          "UPDATE locks SET expires=? WHERE name='scan' AND owner=?")
+          .bind(Date.now() + 30 * 60 * 1000, runId).run());
+        if (!renewed.meta.changes) throw Error('Scan lock expired or belongs to another check');
+      }
+      let state = await step.do('load-run', () => env.DB.prepare('SELECT * FROM scan_runs WHERE id=?').bind(runId).first());
+      if (!state) throw Error('Scan state missing');
+      const cutoff = Date.parse(state.start);
       const onlinerParams = new URLSearchParams();
       for (const rooms of ['1_room', '2_rooms', '3_rooms', '4_rooms', '5_rooms', '6_rooms']) onlinerParams.append('rent_type[]', rooms);
       onlinerParams.set('order', 'created_at:desc');
-      for (let page = 1; page <= 30; page++) {
-        const url = `https://ak.api.onliner.by/search/apartments?${onlinerParams}&page=${page}`;
-        const batch = await step.do(`onliner-${page}`, () => fetchPage(env, url, onliner));
-        results.push(...batch.items.filter(x => Date.parse(x.publishedAt) >= cutoff));
-        if (!batch.items.length || page >= batch.lastPage || batch.items.some(x => Date.parse(x.publishedAt) < cutoff)) break;
+      let fetched = 0;
+      while (state.stage !== 'send' && fetched < 15) {
+        const source = state.stage, page = state.page;
+        let url, parser;
+        if (source === 'onliner') {
+          url = `https://ak.api.onliner.by/search/apartments?${onlinerParams}&page=${page}`;
+          parser = onliner;
+        } else if (source === 'realt') {
+          url = `https://realt.by/rent/flat-for-long/${page === 1 ? '' : `?page=${page}`}`;
+          parser = realt;
+        } else if (source === 'kufar') {
+          const params = new URLSearchParams({ cat: '1010', typ: 'let', rgn: '7', size: '100', sort: 'lst.d', lang: 'ru' });
+          if (state.cursor) params.set('cursor', state.cursor);
+          url = `https://api.kufar.by/search-api/v2/search/rendered-paginated?${params}`;
+          parser = kufar;
+        } else throw Error(`Unknown source ${source}`);
+        const batch = await step.do(`fetch-${source}-${page}`, () => fetchPage(url, parser));
+        const candidates = batch.items.filter(x => matches(x, state.start, state.end));
+        const older = batch.items.some(x => Date.parse(x.publishedAt) < cutoff);
+        let done;
+        if (source === 'onliner') done = !batch.items.length || page >= batch.lastPage || older;
+        else if (source === 'realt') done = !batch.items.length || page + 1 > Math.ceil(batch.total / 30) - 2;
+        else done = !batch.items.length || batch.items.every(x => Date.parse(x.publishedAt) < cutoff) || !batch.next;
+        if (!done && ((source === 'onliner' && page >= 30) || page >= 100))
+          throw Error(`${source} page limit reached; cannot guarantee full search`);
+        const next = done ? ({ onliner: 'realt', realt: 'kufar', kufar: 'send' })[source] : source;
+        const nextPage = done ? 1 : page + 1;
+        const nextCursor = !done && source === 'kufar' ? batch.next : null;
+        await step.do(`save-${source}-${page}`, () => env.DB.batch([
+          ...candidates.map(x => env.DB.prepare(`INSERT OR IGNORE INTO pending(run_id,key,published_at,item)
+            VALUES (?,?,?,?)`).bind(runId, x.key, x.publishedAt, JSON.stringify(x))),
+          env.DB.prepare('UPDATE scan_runs SET stage=?,page=?,cursor=? WHERE id=?')
+            .bind(next, nextPage, nextCursor, runId),
+        ]));
+        state = { ...state, stage: next, page: nextPage, cursor: nextCursor };
+        fetched++;
       }
-      for (let page = 1; page <= 100; page++) {
-        const url = `https://realt.by/rent/flat-for-long/${page === 1 ? '' : `?page=${page}`}`;
-        const batch = await step.do(`realt-${page}`, () => fetchPage(env, url, realt));
-        results.push(...batch.items.filter(x => Date.parse(x.publishedAt) >= cutoff));
-        if (!batch.items.length || page + 1 > Math.ceil(batch.total / 30) - 2) break;
-        if (page === 100) throw Error('Realt page limit reached');
+      if (state.stage !== 'send') {
+        const instance = await step.do('continue-pages', nextInstance);
+        handoff = true;
+        return { continued: instance.id, source: state.stage, page: state.page };
       }
-      const params = new URLSearchParams({ cat: '1010', typ: 'let', rgn: '7', size: '100', sort: 'lst.d', lang: 'ru' });
-      for (let page = 1; page <= 100; page++) {
-        const url = `https://api.kufar.by/search-api/v2/search/rendered-paginated?${params}`;
-        const batch = await step.do(`kufar-${page}`, () => fetchPage(env, url, kufar));
-        results.push(...batch.items.filter(x => Date.parse(x.publishedAt) >= cutoff));
-        if (!batch.items.length || (batch.items.length && batch.items.every(x => Date.parse(x.publishedAt) < cutoff)) || !batch.next) break;
-        params.set('cursor', batch.next);
-        if (page === 100) throw Error('Kufar page limit reached');
+      const count = async () => (await env.DB.prepare(`SELECT count(*) AS n FROM pending p
+        LEFT JOIN sent s ON s.key=p.key WHERE p.run_id=? AND s.key IS NULL`).bind(runId).first()).n;
+      if (!state.header_sent) {
+        const total = await step.do('count-pending', count);
+        const heading = `🏠 Квартиры за период ${label(state.start, state.end)}\n` +
+          (total ? `Новых объявлений: ${total}` : 'Новых объявлений нет');
+        await step.do('send-header', async () => {
+          await telegram(env, 'sendMessage', { chat_id: env.TELEGRAM_CHAT_ID, text: heading, reply_markup: keyboard });
+          await env.DB.prepare('UPDATE scan_runs SET header_sent=1 WHERE id=?').bind(runId).run();
+        });
       }
-      const unique = [...new Map(results.filter(x => matches(x, bounds.start, bounds.end)).map(x => [x.key, x])).values()]
-        .sort((a, b) => Date.parse(a.publishedAt) - Date.parse(b.publishedAt));
-      const pending = [];
-      for (const item of unique) {
-        const seen = await step.do(`seen-${item.key}`, async () => !!(await env.DB.prepare('SELECT 1 FROM sent WHERE key=?').bind(item.key).first()));
-        if (!seen) pending.push(item);
-      }
-      const header = `🏠 Квартиры за период ${label(bounds.start, bounds.end)}\n` +
-        (pending.length ? `Новых объявлений: ${pending.length}` : 'Новых объявлений нет');
-      await step.do('send-header', () => telegram(env, 'sendMessage', { chat_id: env.TELEGRAM_CHAT_ID, text: header, reply_markup: keyboard }));
-      for (const item of pending) {
+      const batch = await step.do('pending-batch', async () => (await env.DB.prepare(`SELECT p.item FROM pending p
+        LEFT JOIN sent s ON s.key=p.key WHERE p.run_id=? AND s.key IS NULL
+        ORDER BY p.published_at,p.key LIMIT 12`).bind(runId).all()).results);
+      for (const row of batch) {
+        const item = JSON.parse(row.item);
         await step.do(`send-${item.key}`, () => sendListing(env, item));
-        await step.do(`save-${item.key}`, () => env.DB.prepare('INSERT OR IGNORE INTO sent(key,sent_at) VALUES (?,?)').bind(item.key, new Date().toISOString()).run());
+        await step.do(`save-${item.key}`, () => env.DB.prepare('INSERT OR IGNORE INTO sent(key,sent_at) VALUES (?,?)')
+          .bind(item.key, new Date().toISOString()).run());
       }
-      await step.do('advance-cursor', () => env.DB.prepare(`INSERT INTO meta(key,value) VALUES ('covered_until',?)
-        ON CONFLICT(key) DO UPDATE SET value=excluded.value`).bind(bounds.end).run());
-      return { bounds, sent: pending.length };
+      const remaining = await step.do('remaining', count);
+      if (remaining) {
+        const instance = await step.do('continue-delivery', nextInstance);
+        handoff = true;
+        return { continued: instance.id, remaining };
+      }
+      await step.do('finish', () => env.DB.batch([
+        env.DB.prepare(`INSERT INTO meta(key,value) VALUES ('covered_until',?)
+          ON CONFLICT(key) DO UPDATE SET value=excluded.value`).bind(state.end),
+        env.DB.prepare('DELETE FROM pending WHERE run_id=?').bind(runId),
+        env.DB.prepare('DELETE FROM scan_runs WHERE id=?').bind(runId),
+      ]));
+      return { bounds: { start: state.start, end: state.end }, delivered: true };
     } finally {
-      await step.do('release-lock', () => env.DB.prepare("DELETE FROM locks WHERE name='scan' AND owner=?").bind(owner).run());
+      if (!handoff) await step.do('release-lock', () => env.DB.prepare("DELETE FROM locks WHERE name='scan' AND owner=?").bind(runId).run());
     }
   }
 }
-
 export default {
   async scheduled(controller, env, ctx) {
     const kind = { '0 6 * * *': 'morning', '0 11 * * *': 'midday', '0 19 * * *': 'evening' }[controller.cron];
