@@ -15,14 +15,17 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 LOG = logging.getLogger("apartments")
 USER_AGENT = "ApartmentMonitor/1.0 (personal rental alerts)"
 ONLINER = "https://ak.api.onliner.by/search/apartments"
 REALT = "https://realt.by/rent/flat-for-long/"
+KUFAR = "https://api.kufar.by/search-api/v2/search/rendered-paginated"
+MINSK = ZoneInfo("Europe/Minsk")
 NEXT_DATA = re.compile(r'<script[^>]*id="__NEXT_DATA__"[^>]*>(.*?)</script>', re.S)
 
 
@@ -44,8 +47,8 @@ class Apartment:
         return f"{self.source}:{self.external_id}"
 
 
-def get(url: str, timeout: int = 25) -> str:
-    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "application/json,text/html"})
+def get(url: str, timeout: int = 25, headers: dict[str, str] | None = None) -> str:
+    request = urllib.request.Request(url, headers=headers or {"User-Agent": USER_AGENT, "Accept": "application/json,text/html"})
     last_error = None
     for attempt in range(3):
         try:
@@ -103,6 +106,50 @@ def parse_realt(page_html: str) -> tuple[list[Apartment], int]:
     return result, int(props["pagination"]["totalCount"])
 
 
+def parse_kufar(payload: dict) -> list[Apartment]:
+    if "ads" not in payload or "pagination" not in payload:
+        raise ValueError("Kufar search data missing; site layout may have changed")
+    result = []
+    for item in payload["ads"]:
+        try:
+            attrs = {p["p"]: p.get("v") for p in item.get("ad_parameters", [])}
+            account = {p["p"]: p.get("v") for p in item.get("account_parameters", [])}
+            coords = attrs.get("coordinates")
+            if not isinstance(coords, list) or len(coords) != 2:
+                continue
+            rooms = attrs.get("rooms")
+            result.append(Apartment("kufar", str(item["ad_id"]), item["ad_link"],
+                account.get("address") or item.get("subject") or "Минск",
+                float(item["price_byn"]) / 100,
+                int(rooms) if str(rooms).isdigit() else None,
+                float(coords[1]), float(coords[0]),
+                datetime.fromisoformat(item["list_time"].replace("Z", "+00:00")),
+                float(item["price_usd"]) / 100))
+        except (KeyError, TypeError, ValueError) as exc:
+            LOG.warning("Skipped malformed Kufar listing: %s", exc)
+    return result
+
+
+def window_for(kind: str, now: datetime) -> tuple[datetime, datetime]:
+    """Half-open publishing interval, based on fixed Minsk clock boundaries."""
+    local = now.astimezone(MINSK)
+    if kind == "current":
+        end = local
+        if local.hour < 14:
+            end = (local - timedelta(days=1)).replace(hour=22, minute=0, second=0, microsecond=0)
+        elif local.hour >= 22:
+            end = local.replace(hour=22, minute=0, second=0, microsecond=0)
+        start = end.replace(hour=14, minute=0, second=0, microsecond=0)
+    else:
+        boundaries = {"morning": (9, 11), "midday": (14, 5), "evening": (22, 8)}
+        hour, duration = boundaries[kind]
+        end = local.replace(hour=hour, minute=0, second=0, microsecond=0)
+        if local < end:
+            end -= timedelta(days=1)
+        start = end - timedelta(hours=duration)
+    return start.astimezone(timezone.utc), end.astimezone(timezone.utc)
+
+
 def fetch_onliner(cutoff: datetime, max_pages: int = 30) -> list[Apartment]:
     params = [("rent_type[]", t) for t in ("1_room", "2_rooms", "3_rooms", "4_rooms", "5_rooms", "6_rooms")]
     params.append(("order", "created_at:desc"))
@@ -135,6 +182,27 @@ def fetch_realt(cutoff: datetime, max_pages: int = 100) -> list[Apartment]:
         time.sleep(0.2)
     if page > max_pages:
         LOG.warning("Realt page limit reached; some new listings may be missed")
+    return listings
+
+
+def fetch_kufar(cutoff: datetime, max_pages: int = 100) -> list[Apartment]:
+    params = {"cat": "1010", "typ": "let", "rgn": "7", "size": "100", "sort": "lst.d", "lang": "ru"}
+    headers = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131.0 Safari/537.36",
+               "Accept": "application/json", "Referer": "https://re.kufar.by/"}
+    listings = []
+    cursor = None
+    for page in range(max_pages):
+        query = params | ({"cursor": cursor} if cursor else {})
+        data = json.loads(get(KUFAR + "?" + urllib.parse.urlencode(query), headers=headers))
+        parsed = parse_kufar(data)
+        listings.extend(item for item in parsed if item.published_at >= cutoff)
+        next_page = next((p.get("token") for p in data["pagination"]["pages"] if p.get("label") == "next"), None)
+        if not data["ads"] or (parsed and all(item.published_at < cutoff for item in parsed)) or not next_page:
+            break
+        cursor = next_page
+        time.sleep(0.2)
+    else:
+        raise RuntimeError("Kufar page limit reached; cannot guarantee complete window")
     return listings
 
 
@@ -225,7 +293,8 @@ def telegram_send(token: str, chat_id: str, item: Apartment):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry-run", action="store_true", help="Fetch/filter and print listings without sending or saving")
-    parser.add_argument("--send-samples", action="store_true", help="Send one matching test listing from each source without changing state")
+    parser.add_argument("--window", choices=("morning", "midday", "evening", "current"),
+                        default=os.environ.get("WINDOW_KIND", "current"))
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     max_price_usd = float(os.environ["PRICE_MAX_USD"]) if os.environ.get("PRICE_MAX_USD") else None
@@ -247,64 +316,39 @@ def main():
     chat_id = os.environ.get("TELEGRAM_CHAT_ID")
     if not args.dry_run and (not token or not chat_id):
         raise ValueError("TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are required")
-    store = None if args.dry_run or args.send_samples else Store()
+    store = None if args.dry_run else Store()
     now = datetime.now(timezone.utc)
-    cutoff = now - timedelta(hours=24)
-    successes = 0
+    start, end = window_for(args.window, now)
+    LOG.info("Window %s: %s to %s", args.window, start.isoformat(), end.isoformat())
+    failures = []
     sent_count = 0
-    sample_sources = set()
-    for source, fetch in (("onliner", fetch_onliner), ("realt", fetch_realt)):
+    for source, fetch in (("onliner", fetch_onliner), ("realt", fetch_realt), ("kufar", fetch_kufar)):
         try:
-            entries = fetch(cutoff)
-            successes += 1
+            entries = fetch(start)
         except Exception:
             LOG.exception("Failed to fetch %s", source)
+            failures.append(source)
             continue
-        filtered = sorted((a for a in entries if matches(a, max_price_usd, max_price_byn, rooms, polygon, center, radius_km)), key=lambda a: a.published_at)
-        LOG.info("%s: fetched %d recent, %d match", source, len(entries), len(filtered))
+        filtered = sorted((a for a in entries if start <= a.published_at < end and
+            matches(a, max_price_usd, max_price_byn, rooms, polygon, center, radius_km)),
+            key=lambda a: a.published_at)
+        LOG.info("%s: fetched %d in window, %d match", source, len(entries), len(filtered))
         if args.dry_run:
             for item in filtered:
                 print(f"{item.key} | ${item.price_usd:g} | {item.price_byn:g} BYN | {item.address} | {item.url}")
             continue
-        if args.send_samples:
-            if filtered:
-                item = filtered[-1]
-                telegram_send(token, chat_id, replace(item, address="ТЕСТ · " + item.address))
-                LOG.info("Sent sample %s: %s", item.key, item.url)
-                sample_sources.add(source)
-            else:
-                LOG.error("No matching %s listing available for the sample", source)
-            continue
-        bootstrapped = store.has("bootstrap:" + source)
         for item in filtered:
             if store.has(item.key):
                 continue
-            if bootstrapped:
-                telegram_send(token, chat_id, item)
-                LOG.info("Sent %s", item.key)
-                sent_count += 1
+            telegram_send(token, chat_id, item)
+            LOG.info("Sent %s: %s", item.key, item.url)
             store.add(item.key)
-        if not bootstrapped:
-            store.add("bootstrap:" + source)
-            LOG.info("Initialized %s baseline; future new listings will be sent", source)
-    if args.send_samples:
-        if sample_sources != {"onliner", "realt"}:
-            raise SystemExit("Could not send a sample from both Onlíner and Realt")
-        return
-    if successes == 0:
-        raise SystemExit("Both sources failed")
+            sent_count += 1
     if store is not None:
         store.touch()
-        if os.environ.get("SEND_EMPTY_STATUS") == "true":
-            if successes == 2 and sent_count == 0:
-                telegram_send_text(token, chat_id,
-                    "🏠 Новых объявлений нет. Проверил Onlíner и Realt: до $500, "
-                    "в радиусе 3 км от метро Площадь Якуба Коласа.")
-                LOG.info("Sent morning no-new-listings status")
-            elif successes < 2:
-                telegram_send_text(token, chat_id,
-                    "⚠️ Не удалось проверить оба сайта. Результат поиска за это утро неполный.")
-                LOG.warning("Sent morning incomplete-search status")
+    LOG.info("Sent %d new apartments", sent_count)
+    if failures:
+        raise SystemExit("Incomplete search; failed sources: " + ", ".join(failures))
 
 
 if __name__ == "__main__":
