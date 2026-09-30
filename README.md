@@ -12,7 +12,7 @@ Each Telegram listing includes the first photo with address, monthly price, room
 | 14:00 | 09:00 to 14:00 |
 | 22:00 | 14:00 to 22:00 |
 
-Each completed check sends one heading with the exact Minsk-time publication period and the number of new listings (or that there were none), followed by the individual listings. The `covered_until` value in `state.json` advances after all three sources succeed. A manual `--window check` run scans from the last completed boundary until now; the next scheduled check resumes from that point.
+Each completed check sends one heading with the exact Minsk-time publication period and the number of new listings (or that there were none), followed by the individual listings. The Cloudflare D1 `covered_until` cursor advances after all three sources succeed. A button press scans from the last completed boundary until now; the next scheduled check resumes from that point.
 
 A manual `--window current` run uses the evening interval ending at the current time (or at 22:00 if run later); when a saved boundary exists, it resumes from that boundary without repeating delivered IDs.
 
@@ -24,29 +24,15 @@ A manual `--window current` run uses the evening interval ending at the current 
 
 `SEARCH_CENTER_LAT`, `SEARCH_CENTER_LON`, `SEARCH_RADIUS_KM`: center and straight-line radius. The current center is the metro station, approximately `53.915833, 27.583333`, with a radius of `3`. If a precise studio address is provided, replace the center coordinates. Alternatively, `AREA_POLYGON` accepts a JSON array of map corners in `[longitude,latitude]` order. Apartments without coordinates are skipped.
 
-`TELEGRAM_BOT_TOKEN`: secret from BotFather. `TELEGRAM_CHAT_ID`: the numeric ID of your own private chat after you send `/start` to the bot; this differs from the bot's own ID. If your bot manager shows a list of registered users, you may find your Telegram user/chat ID there. Otherwise obtain it privately through the Telegram Bot API. Do not post the token publicly or commit it to GitHub. The GitHub Actions version does not listen for commands. Once Cloudflare is deployed, send `/start` in the private chat with the bot. It displays a persistent one-button keyboard («🔄 Проверить новые квартиры») below the input field; pressing it scans from the last completed check and advances the next scheduled window. The keyboard is also attached to each interval heading. Telegram does not support reply keyboards in broadcast channels.
+`TELEGRAM_BOT_TOKEN`: secret from BotFather. `TELEGRAM_CHAT_ID`: the numeric ID of your own private chat after you send `/start` to the bot; this differs from the bot's own ID. If your bot manager shows a list of registered users, you may find your Telegram user/chat ID there. Otherwise obtain it privately through the Telegram Bot API. Do not post the token publicly or commit it to GitHub. Send `/start` in the private chat with the bot. It displays a persistent one-button keyboard («🔄 Проверить новые квартиры») below the input field; pressing it scans from the last completed check and advances the next scheduled window. The keyboard is also attached to each interval heading. Telegram does not support reply keyboards in broadcast channels.
 
-## Free GitHub Actions deployment
+## Free Cloudflare deployment
 
-This public repository uses standard GitHub-hosted runners, which are free for public repositories. The workflow `.github/workflows/monitor.yml` requests runs at **09:00, 14:00 and 22:00 Minsk time**, and can also be run manually from the **Actions** tab with a selected publishing window. GitHub has delayed this repository's scheduled jobs by hours before, so these are best-effort times; a different free scheduler is needed if the delivery time itself must be reliable. The publishing intervals remain fixed even when GitHub starts a job late.
+The active bot runs on [Cloudflare Workers](https://developers.cloudflare.com/workers/) with a free D1 database and a Workflow. Worker Cron starts checks at **09:00, 14:00 and 22:00 Minsk time** (06:00, 11:00 and 19:00 UTC). Telegram sends button presses to the protected Worker webhook. Each check reads from the last successfully completed interval boundary, filters publication timestamps and remembers sent listing IDs in D1. A failed source keeps the boundary unchanged so a later check can catch up. Listings removed in the meantime cannot be recovered.
 
-To activate it without editing code:
+The repository keeps `.github/workflows/monitor.yml` for an emergency manual run; its GitHub schedule is disabled. Running that legacy workflow uses the separate `state.json` cursor, so it may duplicate messages sent by Cloudflare. Use the Telegram button for normal manual checks.
 
-1. Open **Settings → Secrets and variables → Actions → New repository secret**.
-2. Add `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` as two separate repository secrets. Never put either value in a file or commit message.
-3. Open **Actions → Check new apartments → Run workflow**, select a window, and inspect the job log for all three source results. A manual `current` scan is intended for the 14:00–22:00 interval.
-
-The workflow writes `state.json` to the repository after each run. It contains sent listing IDs and the last completed publication boundary, **not bot credentials**. This repository is public, so the IDs are public as well. Each successful run creates a state commit; this keeps a history of checks and avoids GitHub's 60-day no-activity disabling of scheduled workflows. A delayed or missed job is picked up from the last completed boundary on the next successful check, while listings removed before that check cannot be recovered. This design needs no paid hosting or external database.
-
-## Connect Cloudflare for the Worker migration
-
-No direct Cloudflare connector is currently available here. The manual **Verify Cloudflare connection** workflow makes read requests to Cloudflare Workers, D1 and Workflows. A successful read does not prove permission to create or modify D1. No token is printed or committed. Once verified, a deployment workflow can use the same secrets to deploy a Cloudflare Worker and D1 database on the free plan.
-
-1. In Cloudflare, create an account-scoped API token for the account that will host this bot. Grant account permissions **Workers Scripts Edit** and **D1 Edit (D1 Write)** for that account. Avoid the Global API Key. [Cloudflare's GitHub Actions guide](https://developers.cloudflare.com/workers/ci-cd/external-cicd/github-actions/) explains the CI token setup.
-2. Find that account's **Account ID** in Cloudflare. In this GitHub repository, open **Settings → Secrets and variables → Actions**. Add `CLOUDFLARE_API_TOKEN` as a repository secret and `CLOUDFLARE_ACCOUNT_ID` as a repository variable. Never paste the token into a chat, source file, or issue.
-3. Open **Actions → Verify Cloudflare connection → Run workflow**. The job should report `Workers: API access verified`, `D1: API access verified`, and `Workflows: API access verified`. If it fails, share the error text, never the secret.
-
-The deployment workflow `.github/workflows/deploy-cloudflare.yml` creates the free D1 database, imports IDs and the last completed boundary from `state.json`, deploys a JavaScript Worker and scheduled Workflow, installs Telegram secrets and sets a protected webhook. Use **Actions → Deploy apartment monitor to Cloudflare → Run workflow** after permissions are set. This needs no paid service, but it is subject to Cloudflare Free usage limits. The current GitHub scheduler remains active until the Cloudflare bot is deployed and the Telegram webhook has been tested. A Cloudflare setup needs to disable the GitHub scheduler during cutover to avoid duplicate checks.
+To configure or redeploy, add `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, and `CLOUDFLARE_API_TOKEN` as repository Actions secrets, and `CLOUDFLARE_ACCOUNT_ID` as an Actions variable. The Cloudflare token needs Workers Scripts Edit and D1 Edit permissions. The [deployment workflow](.github/workflows/deploy-cloudflare.yml) creates D1 if necessary, deploys the Worker and Workflow, configures secrets, and installs the Telegram webhook. Pushes to `cloudflare/**` deploy automatically. No payment method or paid Workflow schedule is required; Cron is attached to the Worker. The free plan has usage limits, and source sites can temporarily reject server requests.
 
 ## Local / Debian deployment
 
