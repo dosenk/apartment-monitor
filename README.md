@@ -24,7 +24,7 @@ A manual `--window current` run uses the evening interval ending at the current 
 
 `SEARCH_CENTER_LAT`, `SEARCH_CENTER_LON`, `SEARCH_RADIUS_KM`: center and straight-line radius. The current center is the metro station, approximately `53.915833, 27.583333`, with a radius of `3`. If a precise studio address is provided, replace the center coordinates. Alternatively, `AREA_POLYGON` accepts a JSON array of map corners in `[longitude,latitude]` order. Apartments without coordinates are skipped.
 
-`TELEGRAM_BOT_TOKEN`: secret from BotFather. `TELEGRAM_CHAT_ID`: the numeric ID of your own private chat after you send `/start` to the bot; this differs from the bot's own ID. If your bot manager shows a list of registered users, you may find your Telegram user/chat ID there. Otherwise obtain it privately through the Telegram Bot API. Do not post the token publicly or commit it to GitHub. The bot does not listen for commands; change filters in configuration.
+`TELEGRAM_BOT_TOKEN`: secret from BotFather. `TELEGRAM_CHAT_ID`: the numeric ID of your own private chat after you send `/start` to the bot; this differs from the bot's own ID. If your bot manager shows a list of registered users, you may find your Telegram user/chat ID there. Otherwise obtain it privately through the Telegram Bot API. Do not post the token publicly or commit it to GitHub. The GitHub Actions version does not listen for commands. The Cloudflare version accepts `/start` and the private chat’s check button.
 
 ## Free GitHub Actions deployment
 
@@ -40,13 +40,13 @@ The workflow writes `state.json` to the repository after each run. It contains s
 
 ## Connect Cloudflare for the Worker migration
 
-No direct Cloudflare connector is currently available here. The manual **Verify Cloudflare connection** workflow provides a narrow CI bridge: it reads two GitHub Actions repository secrets, makes only read requests to Cloudflare Workers, D1 and Workflows, and reports whether access is working. No token is printed or committed. Once verified, a deployment workflow can use the same secrets to deploy a Cloudflare Worker and D1 database on the free plan.
+No direct Cloudflare connector is currently available here. The manual **Verify Cloudflare connection** workflow makes read requests to Cloudflare Workers, D1 and Workflows. A successful read does not prove permission to create or modify D1. No token is printed or committed. Once verified, a deployment workflow can use the same secrets to deploy a Cloudflare Worker and D1 database on the free plan.
 
-1. In Cloudflare, create an account-scoped API token for the account that will host this bot. Grant **Workers Scripts Edit** and **D1 Edit** for that account. Avoid the Global API Key. [Cloudflare's GitHub Actions guide](https://developers.cloudflare.com/workers/ci-cd/external-cicd/github-actions/) explains the CI token setup.
-2. Find that account's **Account ID** in Cloudflare. In this GitHub repository, open **Settings → Secrets and variables → Actions**. Add repository secrets named `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` with their corresponding values. Never paste the token into a chat, source file, or issue.
+1. In Cloudflare, create an account-scoped API token for the account that will host this bot. Grant account permissions **Workers Scripts Edit** and **D1 Edit (D1 Write)** for that account. Avoid the Global API Key. [Cloudflare's GitHub Actions guide](https://developers.cloudflare.com/workers/ci-cd/external-cicd/github-actions/) explains the CI token setup.
+2. Find that account's **Account ID** in Cloudflare. In this GitHub repository, open **Settings → Secrets and variables → Actions**. Add `CLOUDFLARE_API_TOKEN` as a repository secret and `CLOUDFLARE_ACCOUNT_ID` as a repository variable. Never paste the token into a chat, source file, or issue.
 3. Open **Actions → Verify Cloudflare connection → Run workflow**. The job should report `Workers: API access verified`, `D1: API access verified`, and `Workflows: API access verified`. If it fails, share the error text, never the secret.
 
-The current GitHub scheduler remains active until the Cloudflare bot is deployed and the Telegram webhook has been tested. A Cloudflare setup needs to disable the GitHub scheduler during cutover to avoid duplicate checks.
+The deployment workflow `.github/workflows/deploy-cloudflare.yml` creates the free D1 database, imports IDs and the last completed boundary from `state.json`, deploys a JavaScript Worker and scheduled Workflow, installs Telegram secrets and sets a protected webhook. Use **Actions → Deploy apartment monitor to Cloudflare → Run workflow** after permissions are set. This needs no paid service, but it is subject to Cloudflare Free usage limits. The current GitHub scheduler remains active until the Cloudflare bot is deployed and the Telegram webhook has been tested. A Cloudflare setup needs to disable the GitHub scheduler during cutover to avoid duplicate checks.
 
 ## Local / Debian deployment
 
