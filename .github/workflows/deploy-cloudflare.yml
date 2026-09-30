@@ -1,6 +1,9 @@
 name: Deploy apartment monitor to Cloudflare
 
 on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/deploy-cloudflare.yml', '.github/scripts/cloudflare_setup.py', 'cloudflare/**']
   workflow_dispatch:
 
 permissions:
