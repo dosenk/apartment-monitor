@@ -30,11 +30,11 @@ jobs:
           account = os.environ['CLOUDFLARE_ACCOUNT_ID']
           ident = os.environ['INSTANCE']
           if ident == 'latest':
-              list_url = f'https://api.cloudflare.com/client/v4/accounts/{account}/workflows/apartment-monitor-scan/instances?per_page=5'
+              list_url = f'https://api.cloudflare.com/client/v4/accounts/{account}/workflows/apartment-monitor-scan/instances?per_page=20'
               with urllib.request.urlopen(urllib.request.Request(list_url, headers={'Authorization': 'Bearer ' + os.environ['CLOUDFLARE_API_TOKEN']}), timeout=30) as response:
                   listed = json.load(response)['result']
               instances = listed if isinstance(listed, list) else listed.get('instances', [])
-              print('Recent instances:', [(x.get('id'), x.get('status')) for x in instances[:5]])
+              print('Recent instances:', [(x.get('id'), x.get('status'), x.get('params')) for x in instances[:20]])
               ident = instances[0]['id']
           url = f'https://api.cloudflare.com/client/v4/accounts/{account}/workflows/apartment-monitor-scan/instances/{ident}'
           request = urllib.request.Request(url, headers={'Authorization': 'Bearer ' + os.environ['CLOUDFLARE_API_TOKEN']})
