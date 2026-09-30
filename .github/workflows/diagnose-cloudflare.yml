@@ -1,0 +1,42 @@
+name: Diagnose Cloudflare apartment scan
+
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/diagnose-cloudflare.yml']
+  workflow_dispatch:
+    inputs:
+      instance:
+        description: Workflow instance ID
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  status:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      INSTANCE: ${{ inputs.instance || 'cf_7b0ed07bfc1cdc6f6d11e18e52f6b0db3a270948d1348887b31f1e427d57c49e' }}
+    steps:
+      - name: Inspect Workflow steps
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import urllib.request
+          account = os.environ['CLOUDFLARE_ACCOUNT_ID']
+          ident = os.environ['INSTANCE']
+          url = f'https://api.cloudflare.com/client/v4/accounts/{account}/workflows/apartment-monitor-scan/instances/{ident}'
+          request = urllib.request.Request(url, headers={'Authorization': 'Bearer ' + os.environ['CLOUDFLARE_API_TOKEN']})
+          with urllib.request.urlopen(request, timeout=30) as response:
+              result = json.load(response)['result']
+          print('Status:', result.get('status'), 'error:', result.get('error'), 'steps:', result.get('step_count'), 'output:', result.get('output'))
+          for step in result.get('steps', [])[-15:]:
+              print('Step:', step.get('name'), 'status:', step.get('status'))
+              for attempt in step.get('attempts', [])[-1:]:
+                  if attempt.get('error'):
+                      print('  Error:', attempt['error'])
+          PY
