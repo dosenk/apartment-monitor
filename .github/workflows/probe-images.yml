@@ -1,0 +1,36 @@
+name: Probe apartment photos
+on:
+  push:
+    paths: ['.github/workflows/probe-images.yml']
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Inspect image fields
+        run: |
+          python - <<'PY'
+          import json, urllib.request, re, html
+          from monitor import ONLINER, REALT, KUFAR, get, NEXT_DATA
+          urls=[
+            ("onliner", ONLINER+"?rent_type%5B%5D=1_room&order=created_at%3Adesc&page=1"),
+            ("realt", REALT),
+            ("kufar", KUFAR+"?cat=1010&typ=let&rgn=7&size=2&sort=lst.d"),
+          ]
+          for source,url in urls:
+              try:
+                  headers={"User-Agent":"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131.0 Safari/537.36","Accept":"application/json","Referer":"https://re.kufar.by/"} if source=="kufar" else None
+                  raw=get(url,headers=headers)
+                  if source=="onliner": item=json.loads(raw)["apartments"][0]
+                  elif source=="realt": item=json.loads(html.unescape(NEXT_DATA.search(raw).group(1)))["props"]["pageProps"]["objects"][0]
+                  else: item=json.loads(raw)["ads"][0]
+                  print(source, "KEYS", list(item.keys()), flush=True)
+                  for key,value in item.items():
+                      if any(x in key.lower() for x in ("image","photo","media","cover","thumb")):
+                          print(source, key, str(value)[:1500], flush=True)
+              except Exception as exc:
+                  print(source, "ERROR", type(exc).__name__, str(exc)[:300], flush=True)
+          PY
