@@ -1,6 +1,9 @@
 name: Verify Cloudflare connection
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/verify-cloudflare.yml']
 permissions:
   contents: read
 jobs:
@@ -11,14 +14,14 @@ jobs:
       - name: Check scoped API access
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           python - <<'PY'
           import json, os, urllib.request, urllib.error
           token=os.environ.get('CLOUDFLARE_API_TOKEN')
           account=os.environ.get('CLOUDFLARE_ACCOUNT_ID')
           if not token or not account:
-              raise SystemExit('Add CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID as repository secrets first.')
+              raise SystemExit('Add CLOUDFLARE_API_TOKEN as a repository secret and CLOUDFLARE_ACCOUNT_ID as a repository variable first.')
           base=f'https://api.cloudflare.com/client/v4/accounts/{account}'
           for label,path in (
               ('Workers', '/workers/scripts'),
