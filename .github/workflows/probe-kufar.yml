@@ -12,14 +12,22 @@ jobs:
       - name: Inspect pagination and timestamps
         run: |
           python - <<'PY'
-          import json, urllib.request, urllib.parse
-          url='https://api.kufar.by/search-api/v2/search/rendered-paginated?'+urllib.parse.urlencode({'cat':1010,'typ':'let','rgn':7,'size':42,'sort':'lst.d'})
+          import json, urllib.request, urllib.parse, time
+          url='https://api.kufar.by/search-api/v2/search/rendered-paginated?cat=1010&typ=let&rgn=7&size=2&sort=lst.d'
           headers={'User-Agent':'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131.0 Safari/537.36','Accept':'application/json','Referer':'https://re.kufar.by/'}
           for page in range(2):
-              with urllib.request.urlopen(urllib.request.Request(url,headers=headers),timeout=20) as response: data=json.load(response)
+              data=None
+              for attempt in range(3):
+                  try:
+                      with urllib.request.urlopen(urllib.request.Request(url,headers=headers),timeout=20) as response: data=json.load(response)
+                      break
+                  except Exception as e:
+                      print('FETCH ERROR',type(e).__name__,str(e)[:200],flush=True)
+                      time.sleep(1+attempt)
+              if data is None: break
               ads=data['ads']
               print('PAGE',page,'total',data.get('total'),'count',len(ads),'pagination',json.dumps(data.get('pagination'),ensure_ascii=False)[:2000],flush=True)
-              for ad in ads[:2]+ads[-1:]:
+              for ad in ads[:2]:
                   print('AD', {k:v for k,v in ad.items() if k not in ('images','ad_parameters','account_parameters','body','body_short','calculator')},flush=True)
                   print('LOCATION', [(p.get('p'),p.get('v')) for p in ad.get('ad_parameters',[]) if p.get('p') in ('coordinates','rooms','type')],flush=True)
                   print('PRICE',ad.get('calculator'),flush=True)
