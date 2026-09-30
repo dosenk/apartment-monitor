@@ -36,7 +36,7 @@ jobs:
               print('NEXT',repr(token)[:2000],flush=True)
               if not token: break
               if isinstance(token,list): token=next((x for x in token if x.get('label')=='next'),None)
-              if isinstance(token,dict): token=token.get('link') or token.get('url') or token.get('token')
+              if isinstance(token,dict): token=token.get('token')
               if not isinstance(token,str): break
-              url=token if token.startswith('http') else urllib.parse.urljoin(url,token)
+              url='https://api.kufar.by/search-api/v2/search/rendered-paginated?cat=1010&typ=let&rgn=7&size=2&sort=lst.d&cursor='+urllib.parse.quote(token)
           PY
