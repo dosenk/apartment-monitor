@@ -58,6 +58,7 @@ jobs:
           import json
           import os
           import urllib.request
+          import urllib.error
 
           account = os.environ['CLOUDFLARE_ACCOUNT_ID']
           token = os.environ['CLOUDFLARE_API_TOKEN']
@@ -66,8 +67,13 @@ jobs:
           with urllib.request.urlopen(request, timeout=30) as response:
               domain = json.load(response)['result']['subdomain']
           url = f'https://apartment-monitor-bot.{domain}.workers.dev'
-          with urllib.request.urlopen(url + '/health', timeout=30) as response:
-              assert json.load(response)['ok']
+          try:
+              with urllib.request.urlopen(url + '/health', timeout=30) as response:
+                  assert json.load(response)['ok']
+          except urllib.error.HTTPError as error:
+              print('Worker health HTTP', error.code, 'URL:', url,
+                    'server:', error.headers.get('Server'), 'body:', error.read(400).decode(errors='replace'))
+              raise
           bot = os.environ['TELEGRAM_BOT_TOKEN']
           payload = {'url': url + '/telegram', 'secret_token': hashlib.sha256(bot.encode()).hexdigest(),
                      'allowed_updates': ['message', 'callback_query']}
