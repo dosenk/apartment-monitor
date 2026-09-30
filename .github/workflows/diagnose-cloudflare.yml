@@ -19,7 +19,7 @@ jobs:
     env:
       CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      INSTANCE: ${{ inputs.instance || 'cf_7b0ed07bfc1cdc6f6d11e18e52f6b0db3a270948d1348887b31f1e427d57c49e' }}
+      INSTANCE: ${{ inputs.instance || 'latest' }}
     steps:
       - name: Inspect Workflow steps
         run: |
@@ -29,6 +29,13 @@ jobs:
           import urllib.request
           account = os.environ['CLOUDFLARE_ACCOUNT_ID']
           ident = os.environ['INSTANCE']
+          if ident == 'latest':
+              list_url = f'https://api.cloudflare.com/client/v4/accounts/{account}/workflows/apartment-monitor-scan/instances?per_page=5'
+              with urllib.request.urlopen(urllib.request.Request(list_url, headers={'Authorization': 'Bearer ' + os.environ['CLOUDFLARE_API_TOKEN']}), timeout=30) as response:
+                  listed = json.load(response)['result']
+              instances = listed if isinstance(listed, list) else listed.get('instances', [])
+              print('Recent instances:', [(x.get('id'), x.get('status')) for x in instances[:5]])
+              ident = instances[0]['id']
           url = f'https://api.cloudflare.com/client/v4/accounts/{account}/workflows/apartment-monitor-scan/instances/{ident}'
           request = urllib.request.Request(url, headers={'Authorization': 'Bearer ' + os.environ['CLOUDFLARE_API_TOKEN']})
           with urllib.request.urlopen(request, timeout=30) as response:
