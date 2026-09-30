@@ -4,6 +4,8 @@ Checks Onlíner, Realt and Kufar for newly published long-term rental apartments
 
 Only listings with publication timestamps in the selected half-open Minsk-time interval are sent:
 
+Each Telegram listing includes the first photo with address, monthly price, room count and a direct link. If the listing has no accessible photo, the same information is sent as text.
+
 | Scan | Publication interval |
 | --- | --- |
 | 09:00 | Previous day 22:00 to 09:00 |
