@@ -2,7 +2,7 @@ import json
 import os
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import monitor
@@ -49,32 +49,60 @@ class MonitorTests(unittest.TestCase):
                 self.assertFalse(second.has("onliner:43"))
                 self.assertIsNotNone(second.checked_at)
 
-    def test_morning_reports_no_new_only_after_both_sources_succeed(self):
-        item = monitor.Apartment("onliner", "42", "https://r.onliner.by/ak/apartments/42",
-                                 "Минск", 1400, 1, 53.915, 27.583,
-                                 datetime.now(timezone.utc), 450)
+    def test_kufar_parses_price_location_time_and_direct_link(self):
+        listing = {"ad_id": 123, "ad_link": "https://re.kufar.by/vi/123",
+                   "list_time": "2026-09-30T15:25:23Z", "price_byn": "140000",
+                   "price_usd": "46228", "ad_parameters": [
+                       {"p": "rooms", "v": "2"}, {"p": "coordinates", "v": [27.583, 53.915]}],
+                   "account_parameters": [{"p": "address", "v": "Минск, ул. Якуба Коласа"}]}
+        apartment = monitor.parse_kufar({"ads": [listing], "pagination": {"pages": []}})[0]
+        self.assertEqual((apartment.key, apartment.rooms, apartment.price_byn, apartment.price_usd),
+                         ("kufar:123", 2, 1400, 462.28))
+        self.assertEqual((apartment.latitude, apartment.longitude), (53.915, 27.583))
+        self.assertEqual(apartment.url, listing["ad_link"])
+        self.assertEqual(apartment.published_at.isoformat(), "2026-09-30T15:25:23+00:00")
+
+    def test_windows_are_adjacent_at_minsk_boundaries(self):
+        now = datetime(2026, 9, 30, 20, 0, tzinfo=timezone.utc)
+        morning = monitor.window_for("morning", now)
+        midday = monitor.window_for("midday", now)
+        evening = monitor.window_for("evening", now)
+        self.assertEqual(morning, (datetime(2026, 9, 29, 19, tzinfo=timezone.utc),
+                                   datetime(2026, 9, 30, 6, tzinfo=timezone.utc)))
+        self.assertEqual(midday[0], morning[1])
+        self.assertEqual(evening[0], midday[1])
+        self.assertEqual(evening[1], datetime(2026, 9, 30, 19, tzinfo=timezone.utc))
+        self.assertEqual(monitor.window_for("current", datetime(2026, 9, 30, 14, tzinfo=timezone.utc)),
+                         (datetime(2026, 9, 30, 11, tzinfo=timezone.utc),
+                          datetime(2026, 9, 30, 14, tzinfo=timezone.utc)))
+
+    def test_sends_only_unseen_ads_published_inside_window(self):
+        start = datetime(2026, 9, 30, 11, tzinfo=timezone.utc)
+        end = start + timedelta(hours=8)
+        def item(source, number, published):
+            return monitor.Apartment(source, str(number), "https://example.test/" + str(number),
+                                     "Минск", 1400, 1, 53.915, 27.583, published, 450)
+        in_window = item("onliner", 42, start)
+        at_end = item("onliner", 43, end)
+        from_realt = item("realt", 44, start + timedelta(hours=1))
+        from_kufar = item("kufar", 45, start + timedelta(hours=2))
         with tempfile.TemporaryDirectory() as temp:
             env = {"STATE_PATH": temp + "/state.json", "TELEGRAM_BOT_TOKEN": "test",
                    "TELEGRAM_CHAT_ID": "123", "PRICE_MAX_USD": "500",
                    "SEARCH_CENTER_LAT": "53.915833", "SEARCH_CENTER_LON": "27.583333",
-                   "SEARCH_RADIUS_KM": "3", "SEND_EMPTY_STATUS": "true"}
+                   "SEARCH_RADIUS_KM": "3", "WINDOW_KIND": "evening"}
             with patch.dict(os.environ, env, clear=True), patch("sys.argv", ["monitor.py"]), \
-                    patch.object(monitor, "telegram_send"), patch.object(monitor, "telegram_send_text") as status:
-                store = monitor.Store()
-                store.add("bootstrap:onliner")
-                store.add("bootstrap:realt")
-                store.add(item.key)
-                with patch.object(monitor, "fetch_onliner", return_value=[item]), \
-                        patch.object(monitor, "fetch_realt", return_value=[]):
-                    monitor.main()
-                    status.assert_called_once()
-                    self.assertIn("Новых объявлений нет", status.call_args.args[2])
-                status.reset_mock()
-                with patch.object(monitor, "fetch_onliner", return_value=[item]), \
-                        patch.object(monitor, "fetch_realt", side_effect=RuntimeError("site unavailable")):
-                    monitor.main()
-                    status.assert_called_once()
-                    self.assertIn("неполный", status.call_args.args[2])
+                    patch.object(monitor, "window_for", return_value=(start, end)), \
+                    patch.object(monitor, "telegram_send") as send, \
+                    patch.object(monitor, "fetch_onliner", return_value=[in_window, at_end]), \
+                    patch.object(monitor, "fetch_realt", return_value=[from_realt]), \
+                    patch.object(monitor, "fetch_kufar", return_value=[from_kufar]):
+                monitor.main()
+                self.assertEqual([call.args[2].key for call in send.call_args_list],
+                                 [in_window.key, from_realt.key, from_kufar.key])
+                send.reset_mock()
+                monitor.main()
+                send.assert_not_called()
 
 
 if __name__ == "__main__":
