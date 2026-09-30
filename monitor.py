@@ -41,6 +41,7 @@ class Apartment:
     longitude: float | None
     published_at: datetime
     price_usd: float | None = None
+    photo_url: str | None = None
 
     @property
     def key(self) -> str:
@@ -73,7 +74,7 @@ def parse_onliner(payload: dict) -> list[Apartment]:
                 loc.get("user_address") or loc.get("address") or "Минск",
                 float(price), rooms, loc.get("latitude"), loc.get("longitude"),
                 datetime.fromisoformat(item["created_at"]),
-                float(item["price"]["converted"]["USD"]["amount"])))
+                float(item["price"]["converted"]["USD"]["amount"]), item.get("photo")))
         except (KeyError, TypeError, ValueError) as exc:
             LOG.warning("Skipped malformed Onliner listing: %s", exc)
     return result
@@ -100,7 +101,8 @@ def parse_realt(page_html: str) -> tuple[list[Apartment], int]:
                 item.get("address") or "Минск", float(price), item.get("rooms"),
                 location[1] if len(location) == 2 else None,
                 location[0] if len(location) == 2 else None,
-                datetime.fromisoformat(item["createdAt"]), float(usd)))
+                datetime.fromisoformat(item["createdAt"]), float(usd),
+                next(iter(item.get("images") or []), None)))
         except (KeyError, TypeError, ValueError) as exc:
             LOG.warning("Skipped malformed Realt listing: %s", exc)
     return result, int(props["pagination"]["totalCount"])
@@ -118,13 +120,19 @@ def parse_kufar(payload: dict) -> list[Apartment]:
             if not isinstance(coords, list) or len(coords) != 2:
                 continue
             rooms = attrs.get("rooms")
+            first_image = next(iter(item.get("images") or []), None)
+            photo = None
+            if isinstance(first_image, dict) and first_image.get("path"):
+                path = str(first_image["path"]).lstrip("/")
+                if path.startswith("adim1/") and first_image.get("media_storage") == "rms":
+                    photo = "https://rms.kufar.by/v1/gallery/" + path
             result.append(Apartment("kufar", str(item["ad_id"]), item["ad_link"],
                 account.get("address") or item.get("subject") or "Минск",
                 float(item["price_byn"]) / 100,
                 int(rooms) if str(rooms).isdigit() else None,
                 float(coords[1]), float(coords[0]),
                 datetime.fromisoformat(item["list_time"].replace("Z", "+00:00")),
-                float(item["price_usd"]) / 100))
+                float(item["price_usd"]) / 100, photo))
         except (KeyError, TypeError, ValueError) as exc:
             LOG.warning("Skipped malformed Kufar listing: %s", exc)
     return result
@@ -265,9 +273,9 @@ class Store:
         temp.replace(self.path)
 
 
-def telegram_send_text(token: str, chat_id: str, message: str):
-    data = urllib.parse.urlencode({"chat_id": chat_id, "text": message, "parse_mode": "HTML", "disable_web_page_preview": "true"}).encode()
-    request = urllib.request.Request(f"https://api.telegram.org/bot{token}/sendMessage", data=data)
+def telegram_call(token: str, method: str, data: dict[str, str]):
+    request = urllib.request.Request(f"https://api.telegram.org/bot{token}/{method}",
+                                     data=urllib.parse.urlencode(data).encode())
     try:
         with urllib.request.urlopen(request, timeout=20) as response:
             result = json.load(response)
@@ -282,11 +290,25 @@ def telegram_send_text(token: str, chat_id: str, message: str):
         raise RuntimeError("Telegram rejected message")
 
 
+def telegram_send_text(token: str, chat_id: str, message: str):
+    telegram_call(token, "sendMessage", {"chat_id": chat_id, "text": message,
+                  "parse_mode": "HTML", "disable_web_page_preview": "true"})
+
+
 def telegram_send(token: str, chat_id: str, item: Apartment):
     message = (f"🏠 {item.rooms or '?'} комн. · {html.escape(item.source.title())}\n"
         f"📍 {html.escape(item.address)}\n"
         f"💰 ${item.price_usd:g} / {item.price_byn:g} BYN в месяц\n"
         f"🔗 {html.escape(item.url)}")
+    if item.photo_url:
+        try:
+            telegram_call(token, "sendPhoto", {"chat_id": chat_id, "photo": item.photo_url,
+                          "caption": message, "parse_mode": "HTML"})
+            return
+        except (urllib.error.HTTPError, urllib.error.URLError) as exc:
+            if isinstance(exc, urllib.error.HTTPError) and exc.code in (401, 404):
+                raise
+            LOG.warning("Photo delivery failed for %s; sending text: %s", item.key, exc)
     telegram_send_text(token, chat_id, message)
 
 
