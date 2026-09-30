@@ -110,15 +110,50 @@ class MonitorTests(unittest.TestCase):
             with patch.dict(os.environ, env, clear=True), patch("sys.argv", ["monitor.py"]), \
                     patch.object(monitor, "window_for", return_value=(start, end)), \
                     patch.object(monitor, "telegram_send") as send, \
+                    patch.object(monitor, "send_interval_header") as header, \
                     patch.object(monitor, "fetch_onliner", return_value=[in_window, at_end]), \
                     patch.object(monitor, "fetch_realt", return_value=[from_realt]), \
                     patch.object(monitor, "fetch_kufar", return_value=[from_kufar]):
                 monitor.main()
                 self.assertEqual([call.args[2].key for call in send.call_args_list],
                                  [in_window.key, from_realt.key, from_kufar.key])
+                self.assertEqual(header.call_args.args[2:4], (start, end))
+                self.assertEqual(header.call_args.args[4], 3)
                 send.reset_mock()
+                header.reset_mock()
                 monitor.main()
                 send.assert_not_called()
+                header.assert_not_called()
+
+    def test_manual_check_advances_next_scheduled_interval(self):
+        nine = datetime(2026, 9, 30, 6, tzinfo=timezone.utc)
+        eleven = nine + timedelta(hours=2)
+        fourteen = nine + timedelta(hours=5)
+        with tempfile.TemporaryDirectory() as temp:
+            env = {"STATE_PATH": temp + "/state.json", "TELEGRAM_BOT_TOKEN": "test",
+                   "TELEGRAM_CHAT_ID": "123", "PRICE_MAX_USD": "500",
+                   "SEARCH_CENTER_LAT": "53.915833", "SEARCH_CENTER_LON": "27.583333",
+                   "SEARCH_RADIUS_KM": "3"}
+            with patch.dict(os.environ, env, clear=True):
+                store = monitor.Store()
+                store.touch(nine)
+                with patch("sys.argv", ["monitor.py", "--window", "check"]), \
+                     patch.object(monitor, "datetime") as clock, \
+                     patch.object(monitor, "fetch_onliner", return_value=[]) as fetch, \
+                     patch.object(monitor, "fetch_realt", return_value=[]), \
+                     patch.object(monitor, "fetch_kufar", return_value=[]), \
+                     patch.object(monitor, "send_interval_header") as header:
+                    clock.now.return_value = eleven
+                    clock.fromisoformat.side_effect = datetime.fromisoformat
+                    monitor.main()
+                    self.assertEqual(fetch.call_args.args[0], nine)
+                    self.assertEqual(header.call_args.args[2:5], (nine, eleven, 0))
+                    self.assertEqual(monitor.Store().covered_until, eleven.isoformat())
+                    with patch("sys.argv", ["monitor.py", "--window", "midday"]), \
+                         patch.object(monitor, "window_for", return_value=(nine, fourteen)):
+                        monitor.main()
+                    self.assertEqual(fetch.call_args.args[0], eleven)
+                    self.assertEqual(header.call_args.args[2:5], (eleven, fourteen, 0))
 
 
 if __name__ == "__main__":
