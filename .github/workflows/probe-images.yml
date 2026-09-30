@@ -7,30 +7,32 @@ permissions:
 jobs:
   inspect:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
-      - name: Inspect image fields
+      - name: Verify public image URLs and send one photo preview
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           python - <<'PY'
-          import json, urllib.request, re, html
-          from monitor import ONLINER, REALT, KUFAR, get, NEXT_DATA
-          urls=[
-            ("onliner", ONLINER+"?rent_type%5B%5D=1_room&order=created_at%3Adesc&page=1"),
-            ("realt", REALT),
-            ("kufar", KUFAR+"?cat=1010&typ=let&rgn=7&size=2&sort=lst.d"),
-          ]
-          for source,url in urls:
-              try:
-                  headers={"User-Agent":"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131.0 Safari/537.36","Accept":"application/json","Referer":"https://re.kufar.by/"} if source=="kufar" else None
-                  raw=get(url,headers=headers)
-                  if source=="onliner": item=json.loads(raw)["apartments"][0]
-                  elif source=="realt": item=json.loads(html.unescape(NEXT_DATA.search(raw).group(1)))["props"]["pageProps"]["objects"][0]
-                  else: item=json.loads(raw)["ads"][0]
-                  print(source, "KEYS", list(item.keys()), flush=True)
-                  for key,value in item.items():
-                      if any(x in key.lower() for x in ("image","photo","media","cover","thumb")):
-                          print(source, key, str(value)[:1500], flush=True)
-              except Exception as exc:
-                  print(source, "ERROR", type(exc).__name__, str(exc)[:300], flush=True)
+          from datetime import datetime, timedelta, timezone
+          from monitor import fetch_onliner, fetch_realt, fetch_kufar, matches, telegram_call
+          from urllib.request import Request, urlopen
+          import os
+          cutoff=datetime.now(timezone.utc)-timedelta(hours=24)
+          for source, fetch in (("onliner",fetch_onliner),("realt",fetch_realt),("kufar",fetch_kufar)):
+              items=fetch(cutoff)
+              found=next((x for x in items if x.photo_url and matches(x,500,None,set(),None,(53.915833,27.583333),3)),None)
+              if not found:
+                  print(source, "NO_MATCH_WITH_PHOTO", flush=True)
+                  continue
+              request=Request(found.photo_url,headers={"User-Agent":"Mozilla/5.0"})
+              with urlopen(request,timeout=15) as response:
+                  prefix=response.read(12)
+                  print(source,found.key,"PHOTO",response.status,response.headers.get("content-type"),prefix.hex(),flush=True)
+              if source=="kufar":
+                  caption=f"🧪 Проверка фото · Kufar\n{found.address}\n$\u007bfound.price_usd:g\u007d\n{found.url}"
+                  telegram_call(os.environ["TELEGRAM_BOT_TOKEN"],"sendPhoto",{"chat_id":os.environ["TELEGRAM_CHAT_ID"],"photo":found.photo_url,"caption":caption})
+                  print("TELEGRAM_PHOTO_SENT",found.key,flush=True)
           PY
