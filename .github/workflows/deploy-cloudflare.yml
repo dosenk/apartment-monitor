@@ -1,9 +1,6 @@
 name: Deploy apartment monitor to Cloudflare
 
 on:
-  push:
-    branches: [main]
-    paths: ['.github/workflows/deploy-cloudflare.yml', '.github/scripts/cloudflare_setup.py', 'cloudflare/**']
   workflow_dispatch:
 
 permissions:
@@ -44,8 +41,6 @@ jobs:
           if [ -s cloudflare/seed.sql ]; then
             npx wrangler d1 execute apartment-monitor-state --remote --file cloudflare/seed.sql
           fi
-      - name: Deploy private listing fetcher
-        run: npx wrangler deploy --config wrangler-fetcher.jsonc
       - name: Deploy Worker and Workflow
         run: npx wrangler deploy
       - name: Configure Worker secrets
@@ -121,16 +116,25 @@ jobs:
           instance = update('🔄 Проверить новые квартиры')['id']
           print('Manual check Workflow created:', instance)
           status_url = f'https://api.cloudflare.com/client/v4/accounts/{account}/workflows/apartment-monitor-scan/instances/{instance}'
-          for _ in range(120):
+          for _ in range(180):
               time.sleep(5)
-              with urllib.request.urlopen(urllib.request.Request(status_url, headers=headers), timeout=30) as response:
+              url = f'https://api.cloudflare.com/client/v4/accounts/{account}/workflows/apartment-monitor-scan/instances/{instance}'
+              with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=30) as response:
                   result = json.load(response)['result']
               status = result['status']
-              if status == 'complete':
-                  print('Manual check completed:', result.get('output'))
-                  break
               if status in ('errored', 'terminated'):
                   raise RuntimeError(f'Manual check {status}: {result.get("error")}')
+              if status == 'complete':
+                  output = result.get('output') or {}
+                  if isinstance(output, str):
+                      output = json.loads(output)
+                  if output.get('continued'):
+                      instance = output['continued']
+                      continue
+                  if output.get('delivered') or output.get('skipped'):
+                      print('Manual check completed:', output)
+                      break
+                  raise RuntimeError(f'Unexpected Workflow result: {output}')
           else:
-              raise RuntimeError('Manual check still running after 10 minutes; inspect Cloudflare Workflow')
+              raise RuntimeError('Manual check still running after 15 minutes; inspect Cloudflare Workflow')
           PY
