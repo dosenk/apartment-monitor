@@ -2,6 +2,7 @@ import json
 import os
 import tempfile
 import unittest
+import urllib.error
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
@@ -12,21 +13,24 @@ class MonitorTests(unittest.TestCase):
     def test_parse_onliner_price_date_and_rooms(self):
         item = {"id": 42, "price": {"converted": {"BYN": {"amount": "1500.00"}, "USD": {"amount": "490.00"}}},
                 "rent_type": "2_rooms", "location": {"user_address": "Минск", "latitude": 53.9, "longitude": 27.6},
-                "created_at": "2026-09-24T09:00:00+03:00", "url": "https://r.onliner.by/ak/apartments/42"}
+                "created_at": "2026-09-24T09:00:00+03:00", "url": "https://r.onliner.by/ak/apartments/42",
+                "photo": "https://imgproxy.onliner.by/example.jpg"}
         apartment = monitor.parse_onliner({"apartments": [item]})[0]
         self.assertEqual((apartment.key, apartment.price_byn, apartment.rooms), ("onliner:42", 1500, 2))
         self.assertEqual(apartment.price_usd, 490)
+        self.assertEqual(apartment.photo_url, item["photo"])
 
     def test_parse_realt_conversion_and_link(self):
         item = {"code": 99, "price": 700, "priceCurrency": 840, "priceRates": {"933": 1990, "840": 700},
                 "address": "Минск", "rooms": 2, "location": [27.6, 53.9],
-                "createdAt": "2026-09-24T09:00:00+03:00"}
+                "createdAt": "2026-09-24T09:00:00+03:00", "images": ["https://cdn.realt.by/img/first"]}
         payload = {"props": {"pageProps": {"objects": [item], "pagination": {"totalCount": 1}}}}
         page = '<script id="__NEXT_DATA__" type="application/json">' + json.dumps(payload) + '</script>'
         apartments, total = monitor.parse_realt(page)
         self.assertEqual(total, 1)
         self.assertEqual((apartments[0].price_byn, apartments[0].price_usd), (1990, 700))
         self.assertEqual(apartments[0].url, "https://realt.by/rent-flat-for-long/object/99/")
+        self.assertEqual(apartments[0].photo_url, item["images"][0])
 
     def test_polygon_and_filters(self):
         polygon = [[27.5, 53.8], [27.7, 53.8], [27.7, 54], [27.5, 54]]
@@ -54,13 +58,25 @@ class MonitorTests(unittest.TestCase):
                    "list_time": "2026-09-30T15:25:23Z", "price_byn": "140000",
                    "price_usd": "46228", "ad_parameters": [
                        {"p": "rooms", "v": "2"}, {"p": "coordinates", "v": [27.583, 53.915]}],
-                   "account_parameters": [{"p": "address", "v": "Минск, ул. Якуба Коласа"}]}
+                   "account_parameters": [{"p": "address", "v": "Минск, ул. Якуба Коласа"}],
+                   "images": [{"media_storage": "rms", "path": "adim1/first.jpg"}]}
         apartment = monitor.parse_kufar({"ads": [listing], "pagination": {"pages": []}})[0]
         self.assertEqual((apartment.key, apartment.rooms, apartment.price_byn, apartment.price_usd),
                          ("kufar:123", 2, 1400, 462.28))
         self.assertEqual((apartment.latitude, apartment.longitude), (53.915, 27.583))
         self.assertEqual(apartment.url, listing["ad_link"])
         self.assertEqual(apartment.published_at.isoformat(), "2026-09-30T15:25:23+00:00")
+        self.assertEqual(apartment.photo_url, "https://rms.kufar.by/v1/gallery/adim1/first.jpg")
+
+    def test_photo_delivery_falls_back_to_text_without_losing_link(self):
+        item = monitor.Apartment("kufar", "123", "https://re.kufar.by/vi/123", "Минск", 1400,
+                                 1, 53.9, 27.6, datetime.now(timezone.utc), 450,
+                                 "https://rms.kufar.by/v1/gallery/adim1/first.jpg")
+        with patch.object(monitor, "telegram_call", side_effect=[urllib.error.HTTPError(
+                item.photo_url, 400, "bad photo", {}, None), None]) as call:
+            monitor.telegram_send("token", "chat", item)
+        self.assertEqual([x.args[1] for x in call.call_args_list], ["sendPhoto", "sendMessage"])
+        self.assertIn(item.url, call.call_args_list[1].args[2]["text"])
 
     def test_windows_are_adjacent_at_minsk_boundaries(self):
         now = datetime(2026, 9, 30, 20, 0, tzinfo=timezone.utc)
