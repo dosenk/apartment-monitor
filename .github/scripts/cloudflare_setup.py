@@ -2,6 +2,7 @@
 import json
 import os
 import urllib.request
+import urllib.error
 from pathlib import Path
 
 account = os.environ['CLOUDFLARE_ACCOUNT_ID']
@@ -12,8 +13,12 @@ def api(path, payload=None):
     data = None if payload is None else json.dumps(payload).encode()
     request = urllib.request.Request(base + path, data=data, headers={
         'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'})
-    with urllib.request.urlopen(request, timeout=30) as response:
-        result = json.load(response)
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            result = json.load(response)
+    except urllib.error.HTTPError as error:
+        detail = json.load(error)
+        raise RuntimeError(f'Cloudflare API {path}: HTTP {error.code}: {detail.get("errors")}') from None
     if not result['success']:
         raise RuntimeError(f'Cloudflare API failed for {path}: {result.get("errors")}')
     return result['result']
