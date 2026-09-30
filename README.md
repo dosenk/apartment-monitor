@@ -12,7 +12,9 @@ Each Telegram listing includes the first photo with address, monthly price, room
 | 14:00 | 09:00 to 14:00 |
 | 22:00 | 14:00 to 22:00 |
 
-An empty window produces no Telegram message. A manual `--window current` run scans today's 14:00 to the current time (or to 22:00 if it runs later), without repeating IDs already delivered.
+Each completed check sends one heading with the exact Minsk-time publication period and the number of new listings (or that there were none), followed by the individual listings. The `covered_until` value in `state.json` advances after all three sources succeed. A manual `--window check` run scans from the last completed boundary until now; the next scheduled check resumes from that point.
+
+A manual `--window current` run uses the evening interval ending at the current time (or at 22:00 if run later); when a saved boundary exists, it resumes from that boundary without repeating delivered IDs.
 
 ## Configuration
 
@@ -34,7 +36,17 @@ To activate it without editing code:
 2. Add `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` as two separate repository secrets. Never put either value in a file or commit message.
 3. Open **Actions → Check new apartments → Run workflow**, select a window, and inspect the job log for all three source results. A manual `current` scan is intended for the 14:00–22:00 interval.
 
-The workflow writes `state.json` to the repository after each run. It contains sent listing IDs and a last-check timestamp, **not bot credentials**. This repository is public, so the IDs are public as well. Each successful run creates a state commit; this keeps a history of checks and avoids GitHub's 60-day no-activity disabling of scheduled workflows. If a scheduled job is dropped and the next job only scans its own window, listings from the dropped window are missed. This design needs no paid hosting or external database.
+The workflow writes `state.json` to the repository after each run. It contains sent listing IDs and the last completed publication boundary, **not bot credentials**. This repository is public, so the IDs are public as well. Each successful run creates a state commit; this keeps a history of checks and avoids GitHub's 60-day no-activity disabling of scheduled workflows. A delayed or missed job is picked up from the last completed boundary on the next successful check, while listings removed before that check cannot be recovered. This design needs no paid hosting or external database.
+
+## Connect Cloudflare for the Worker migration
+
+No direct Cloudflare connector is currently available here. The manual **Verify Cloudflare connection** workflow provides a narrow CI bridge: it reads two GitHub Actions repository secrets, makes only read requests to Cloudflare Workers, D1 and Workflows, and reports whether access is working. No token is printed or committed. Once verified, a deployment workflow can use the same secrets to deploy a Cloudflare Worker and D1 database on the free plan.
+
+1. In Cloudflare, create an account-scoped API token for the account that will host this bot. Grant **Workers Scripts Edit** and **D1 Edit** for that account. Avoid the Global API Key. [Cloudflare's GitHub Actions guide](https://developers.cloudflare.com/workers/ci-cd/external-cicd/github-actions/) explains the CI token setup.
+2. Find that account's **Account ID** in Cloudflare. In this GitHub repository, open **Settings → Secrets and variables → Actions**. Add repository secrets named `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` with their corresponding values. Never paste the token into a chat, source file, or issue.
+3. Open **Actions → Verify Cloudflare connection → Run workflow**. The job should report `Workers: API access verified`, `D1: API access verified`, and `Workflows: API access verified`. If it fails, share the error text, never the secret.
+
+The current GitHub scheduler remains active until the Cloudflare bot is deployed and the Telegram webhook has been tested. A Cloudflare setup needs to disable the GitHub scheduler during cutover to avoid duplicate checks.
 
 ## Local / Debian deployment
 
