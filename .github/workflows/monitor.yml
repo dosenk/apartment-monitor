@@ -14,7 +14,7 @@ on:
       window:
         description: 'Publishing window to scan'
         type: choice
-        options: [morning, midday, evening, current]
+        options: [morning, midday, evening, current, check]
         default: current
 
 permissions:
@@ -55,6 +55,7 @@ jobs:
           SEARCH_CENTER_LAT: '53.915833'
           SEARCH_CENTER_LON: '27.583333'
           SEARCH_RADIUS_KM: '3'
+          ENABLE_CHECK_BUTTON: ${{ vars.ENABLE_CHECK_BUTTON }}
           STATE_PATH: state.json
           SCHEDULE: ${{ github.event.schedule }}
           MANUAL_WINDOW: ${{ inputs.window }}
@@ -88,6 +89,7 @@ jobs:
           current = json.loads(path.read_text()) if path.exists() else {}
           merged = {
               'checked_at': max(filter(None, (current.get('checked_at'), candidate.get('checked_at'))), default=None),
+              'covered_until': max(filter(None, (current.get('covered_until'), candidate.get('covered_until'))), default=None),
               'seen': sorted(set(current.get('seen', [])) | set(candidate.get('seen', []))),
           }
           path.write_text(json.dumps(merged, ensure_ascii=False, indent=2) + '\n')
