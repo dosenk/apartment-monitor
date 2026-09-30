@@ -68,7 +68,8 @@ jobs:
               domain = json.load(response)['result']['subdomain']
           url = f'https://apartment-monitor-bot.{domain}.workers.dev'
           try:
-              with urllib.request.urlopen(url + '/health', timeout=30) as response:
+              with urllib.request.urlopen(urllib.request.Request(url + '/health',
+                  headers={'User-Agent': 'Mozilla/5.0 (compatible; ApartmentMonitor/1.0)'}), timeout=30) as response:
                   assert json.load(response)['ok']
           except urllib.error.HTTPError as error:
               print('Worker health HTTP', error.code, 'URL:', url,
