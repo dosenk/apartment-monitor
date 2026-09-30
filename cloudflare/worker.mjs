@@ -1,12 +1,12 @@
 import { WorkflowEntrypoint } from 'cloudflare:workers';
 import { BUTTON, interval, label, matches, onliner, realt, kufar, caption } from './logic.mjs';
 
-const AGENT = 'ApartmentMonitor/1.0 (personal rental alerts)';
 const keyboard = { keyboard: [[{ text: BUTTON }]], resize_keyboard: true, is_persistent: true };
-const sourceHeaders = { 'User-Agent': AGENT, Accept: 'application/json,text/html' };
 
-async function fetchPage(url, parser, headers = sourceHeaders) {
-  const response = await fetch(url, { headers, signal: AbortSignal.timeout(25000) });
+async function fetchPage(env, url, parser) {
+  const response = await env.PAGE_FETCH.fetch(
+    `https://apartment-monitor-fetch.internal/fetch?url=${encodeURIComponent(url)}`,
+    { signal: AbortSignal.timeout(25000) });
   if (!response.ok) throw Error(`Source HTTP ${response.status}: ${new URL(url).hostname}`);
   return parser(parser === realt ? await response.text() : await response.json());
 }
@@ -63,13 +63,13 @@ export class ApartmentScan extends WorkflowEntrypoint {
       onlinerParams.set('order', 'created_at:desc');
       for (let page = 1; page <= 30; page++) {
         const url = `https://ak.api.onliner.by/search/apartments?${onlinerParams}&page=${page}`;
-        const batch = await step.do(`onliner-${page}`, () => fetchPage(url, onliner));
+        const batch = await step.do(`onliner-${page}`, () => fetchPage(env, url, onliner));
         results.push(...batch.items.filter(x => Date.parse(x.publishedAt) >= cutoff));
         if (!batch.items.length || page >= batch.lastPage || batch.items.some(x => Date.parse(x.publishedAt) < cutoff)) break;
       }
       for (let page = 1; page <= 100; page++) {
         const url = `https://realt.by/rent/flat-for-long/${page === 1 ? '' : `?page=${page}`}`;
-        const batch = await step.do(`realt-${page}`, () => fetchPage(url, realt));
+        const batch = await step.do(`realt-${page}`, () => fetchPage(env, url, realt));
         results.push(...batch.items.filter(x => Date.parse(x.publishedAt) >= cutoff));
         if (!batch.items.length || page + 1 > Math.ceil(batch.total / 30) - 2) break;
         if (page === 100) throw Error('Realt page limit reached');
@@ -77,9 +77,7 @@ export class ApartmentScan extends WorkflowEntrypoint {
       const params = new URLSearchParams({ cat: '1010', typ: 'let', rgn: '7', size: '100', sort: 'lst.d', lang: 'ru' });
       for (let page = 1; page <= 100; page++) {
         const url = `https://api.kufar.by/search-api/v2/search/rendered-paginated?${params}`;
-        const batch = await step.do(`kufar-${page}`, () => fetchPage(url, kufar, {
-          'User-Agent': 'Mozilla/5.0 Chrome/131.0 Safari/537.36', Accept: 'application/json', Referer: 'https://re.kufar.by/',
-        }));
+        const batch = await step.do(`kufar-${page}`, () => fetchPage(env, url, kufar));
         results.push(...batch.items.filter(x => Date.parse(x.publishedAt) >= cutoff));
         if (!batch.items.length || (batch.items.length && batch.items.every(x => Date.parse(x.publishedAt) < cutoff)) || !batch.next) break;
         params.set('cursor', batch.next);
