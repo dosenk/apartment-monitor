@@ -22,6 +22,7 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      BOT_ACCESS_PASSWORD: ${{ secrets.BOT_ACCESS_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -50,6 +51,9 @@ jobs:
         run: |
           printf '%s' "$TELEGRAM_BOT_TOKEN" | npx wrangler secret put TELEGRAM_BOT_TOKEN
           printf '%s' "$TELEGRAM_CHAT_ID" | npx wrangler secret put TELEGRAM_CHAT_ID
+          if [ -n "$BOT_ACCESS_PASSWORD" ]; then
+            printf '%s' "$BOT_ACCESS_PASSWORD" | npx wrangler secret put BOT_ACCESS_PASSWORD
+          fi
           printf '%s' "$TELEGRAM_BOT_TOKEN" | sha256sum | cut -d ' ' -f1 | npx wrangler secret put WEBHOOK_SECRET
       - name: Test Worker and configure Telegram webhook
         run: |
@@ -70,7 +74,9 @@ jobs:
           try:
               with urllib.request.urlopen(urllib.request.Request(url + '/health',
                   headers={'User-Agent': 'Mozilla/5.0 (compatible; ApartmentMonitor/1.0)'}), timeout=30) as response:
-                  assert json.load(response)['ok']
+                  health = json.load(response)
+                  assert health['ok']
+                  print('Password login ready:', health.get('login_ready', False))
           except urllib.error.HTTPError as error:
               print('Worker health HTTP', error.code, 'URL:', url,
                     'server:', error.headers.get('Server'), 'body:', error.read(400).decode(errors='replace'))

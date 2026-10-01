@@ -2,6 +2,8 @@
 
 ## Telegram bot on Cloudflare
 
+The bot supports multiple users in private Telegram chats. New users enter the shared access password once before settings become available. The password is stored as the Cloudflare secret `BOT_ACCESS_PASSWORD` (set the matching GitHub Actions secret before deploying); it is case-sensitive. After five failed attempts, login is blocked for ten minutes. Each chat has its own preferences, draft, schedule, scan cursor and sent-listing history. The original owner is authorized during migration and retains existing data.
+
 The active bot is a Cloudflare Worker with a D1 database and Telegram webhook. Open
 **⚙️ Настройки поиска → 📍 Область → район → город** to select one or more places in Belarus. The settings root has only one location button; choosing a city returns to settings. Open **📍 Область** again to add or remove another city,
 then set an optional BYN price limit and check frequency. Minsk listings can additionally

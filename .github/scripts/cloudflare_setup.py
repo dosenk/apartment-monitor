@@ -40,5 +40,13 @@ lines = ['INSERT OR IGNORE INTO sent(key,sent_at) VALUES (' + quote(key) + ", 'm
          for key in state.get('seen', [])]
 if state.get('covered_until'):
     lines.append("INSERT OR IGNORE INTO meta(key,value) VALUES ('covered_until', " + quote(state['covered_until']) + ');')
+owner = os.environ['TELEGRAM_CHAT_ID'].strip()
+lines.extend([
+    'INSERT OR IGNORE INTO bot_users(chat_id,authorized) VALUES (' + quote(owner) + ',1);',
+    'INSERT OR IGNORE INTO scan_recipients(run_id,chat_id) SELECT id,' + quote(owner) + ' FROM scan_runs;',
+    'INSERT OR IGNORE INTO locks(name,owner,expires) SELECT ' + quote('scan:' + owner) + ",owner,expires FROM locks WHERE name='scan';",
+    'INSERT OR IGNORE INTO user_sent(chat_id,key,sent_at) SELECT ' + quote(owner) + ',key,sent_at FROM sent;',
+    'INSERT OR IGNORE INTO meta(key,value) SELECT ' + quote('covered_until:' + owner) + ",value FROM meta WHERE key='covered_until';",
+])
 Path('cloudflare/seed.sql').write_text('\n'.join(lines) + '\n')
 print('D1 database and Wrangler config ready; migrated IDs:', len(state.get('seen', [])))
