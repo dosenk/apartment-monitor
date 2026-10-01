@@ -30,7 +30,7 @@ jobs:
               else:
                 s=body.decode('utf-8','replace')
                 rows=[]
-                for match in re.finditer(r"^\\s*\\(\\d+, '([^']*)', '([^']*)', (?:'([^']*)'|NULL), (?:'[^']*'|NULL), '([^']*)', '([^']*)', '([^']*)'",s,re.M):
+                for match in re.finditer(r"^\s*\(\d+, '([^']*)', '([^']*)', (?:'([^']*)'|NULL), (?:'[^']*'|NULL), '([^']*)', '([^']*)', '([^']*)'",s,re.M):
                   name,obl,raion,tip,lat,lon=match.groups()
                   if tip in ('г.','гп','рп'): rows.append([name,obl,raion,tip,lat,lon])
                 print('COUNTS',len(rows),'MINSK', [x for x in rows if x[0] in ('Минск','Заславль','Брест','Барановичи')])
