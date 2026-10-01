@@ -28,7 +28,7 @@ config = {
     'compatibility_date': '2026-09-30',
     'workers_dev': True,
     'd1_databases': [{'binding': 'DB', 'database_name': 'apartment-monitor-state', 'database_id': db['uuid']}],
-    'triggers': {'crons': ['0 6 * * *', '0 11 * * *', '0 19 * * *']},
+    'triggers': {'crons': ['*/10 * * * *']},
     'workflows': [{'name': 'apartment-monitor-scan', 'binding': 'SCAN',
                    'class_name': 'ApartmentScan'}],
 }
