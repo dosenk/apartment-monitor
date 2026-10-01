@@ -5,7 +5,9 @@
 The active bot is a Cloudflare Worker with a D1 database and Telegram webhook. Open
 **⚙️ Настройки поиска → 📍 Область → район → город** to select one or more places in Belarus,
 then set an optional BYN price limit and check frequency. Minsk listings can additionally
-be filtered by metro station or line, Minsk city district and radius. Brest listings
+be filtered by metro station or line and Minsk city district. These controls appear
+only after an explicit Minsk selection. Radius is disabled, including previously saved
+radius values. Brest listings
 can also be filtered by its Leninsky and Moskovsky city districts. Those Minsk filters
 do not restrict other selected towns. With no city districts selected, the city district
 filter is absent. **✅ Применить** saves the draft. **📋 Текущие настройки** displays only
@@ -14,16 +16,20 @@ City district geometry: © OpenStreetMap contributors, ODbL.
 
 The location choices are served immediately by the Worker from a bundled open
 settlement list (source: [geolocation-cities](https://github.com/jug-it/geolocation-cities),
-2019), with the six regional capitals and Minsk included. This is a cached source,
-not a live official administrative API. Some district centers have no rayon field in
-that source and appear under **Города без района в справочнике**. Districts *within*
+2019), with regional capitals and province-level cities included separately. The
+directory validates all 118 administrative rayons (including 22 in Minsk oblast),
+independently of settlement records. Missing rayon fields for settlement centers are
+reconstructed from nearby records; Minsk-area Borovlyany has an explicit correction.
+Cities, urban settlements, agrotowns and villages are selectable, with pagination and
+name search. This is a cached source, not a live official administrative API. Districts *within*
 a city are currently selectable for Minsk and Brest; the rayon in the location hierarchy is
 the administrative rayon of an oblast. External listing feeds can omit a precise
 city, in which case that listing is skipped rather than assigned to the wrong city.
 
 The Worker scans the national listing feeds for Onliner, Realt and Kufar. Existing
-saved settings without a city are interpreted as Minsk, so current searches continue
-to work. Telegram notifications have a heading for the publication period and
+saved settings without a city are interpreted as Minsk for active searches. Legacy
+drafts start without an implicit city selection; a city must be chosen before applying.
+Old settlement indices are preserved when expanding the directory. Telegram notifications have a heading for the publication period and
 individual listing links and photos where available.
 
 The Python and GitHub Actions instructions below describe the separate legacy runner.

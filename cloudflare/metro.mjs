@@ -46,8 +46,8 @@ export const STATIONS = [
 ];
 
 import { DISTRICTS, CITY_DISTRICTS } from './districts.mjs';
-import { CITIES } from './geography.mjs';
-import { DEFAULT_CITY } from './location.mjs';
+import { CITIES, CANONICAL_CITY } from './geography.mjs';
+import { DEFAULT_CITY, OBLASTS, rayons } from './location.mjs';
 
 export const FREQUENCIES = ['scheduled', '10m', '30m', '1h', '4h', '8h'];
 export const DEFAULT_PREFERENCES = Object.freeze({ cities: [DEFAULT_CITY], stations: [], onliner: [], districts: [],
@@ -59,7 +59,12 @@ export function preferences(value) {
   const districts = Array.isArray(value?.districts) ? value.districts : [];
   const cities = Array.isArray(value?.cities) ? value.cities : [DEFAULT_CITY];
   return {
-    cities: [...new Set(cities.filter(x => Number.isInteger(x) && x >= 0 && x < CITIES.length))],
+    cities: [...new Set(cities.filter(x => Number.isInteger(x) && x >= 0 && x < CITIES.length).map(x => CANONICAL_CITY[x]))],
+    locationChosen: value?.locationChosen === true,
+    browseOblast: Number.isInteger(value?.browseOblast) && OBLASTS[value.browseOblast] ? value.browseOblast : null,
+    browseRayon: Number.isInteger(value?.browseOblast) && OBLASTS[value.browseOblast] &&
+      Number.isInteger(value?.browseRayon) && rayons(OBLASTS[value.browseOblast])[value.browseRayon] ? value.browseRayon : null,
+    placeQuery: typeof value?.placeQuery === 'string' ? value.placeQuery.slice(0, 80) : '',
     stations: [...new Set(stations.filter(x => Number.isInteger(x) && x >= 0 && x < STATIONS.length))],
     onliner: [...new Set(onliner.filter(x => ['near', '1', '2', '3'].includes(x)))],
     districts: [...new Set(districts.filter(x => DISTRICTS.includes(x)))],
@@ -67,7 +72,7 @@ export function preferences(value) {
       [city, [...new Set((Array.isArray(value?.cityDistricts?.[city]) ? value.cityDistricts[city] : [])
         .filter(name => available.includes(name)))]])),
     maxByn: Number.isFinite(value?.maxByn) && value.maxByn > 0 ? value.maxByn : null,
-    radiusKm: Number.isFinite(value?.radiusKm) && value.radiusKm > 0 ? value.radiusKm : null,
+    radiusKm: null,
     frequency: FREQUENCIES.includes(value?.frequency) ? value.frequency : 'scheduled',
   };
 }
@@ -102,26 +107,21 @@ function canonical(name) {
     .replace('немаршанский сад', 'неморшанский сад');
 }
 
-export function matchesMetro(item, value, distanceKm, defaultCenter) {
+export function matchesMetro(item, value, distanceKm) {
   const selected = preferences(value);
   const source = item.key?.split(':')[0];
-  const radiusKm = selected.radiusKm;
   const hasCoords = Number.isFinite(item.latitude) && Number.isFinite(item.longitude);
   if (source === 'onliner') {
-    if (!selected.onliner.length) return radiusKm === null || (hasCoords &&
-      distanceKm(item.latitude, item.longitude, ...defaultCenter) <= radiusKm);
+    if (!selected.onliner.length) return true;
     if (!hasCoords) return false;
     const distances = STATIONS.map(station => distanceKm(item.latitude, item.longitude, station[2], station[3]));
     const nearest = distances.indexOf(Math.min(...distances));
-    if (selected.onliner.includes('near')) return distances[nearest] <= (radiusKm ?? 1);
-    return selected.onliner.includes(String(STATIONS[nearest][1])) &&
-      (radiusKm === null || distances[nearest] <= radiusKm);
+    if (selected.onliner.includes('near')) return distances[nearest] <= 1;
+    return selected.onliner.includes(String(STATIONS[nearest][1]));
   } else if (source === 'realt' || source === 'kufar') {
-    if (!selected.stations.length) return radiusKm === null || (hasCoords &&
-      distanceKm(item.latitude, item.longitude, ...defaultCenter) <= radiusKm);
+    if (!selected.stations.length) return true;
     const stations = selected.stations.map(index => STATIONS[index]).filter(Boolean)
       .filter(station => (item.metroNames || []).some(name => canonical(name) === canonical(station[0])));
-    return stations.some(station => radiusKm === null || (hasCoords &&
-      distanceKm(item.latitude, item.longitude, station[2], station[3]) <= radiusKm));
+    return stations.length > 0;
   } else return false;
 }
