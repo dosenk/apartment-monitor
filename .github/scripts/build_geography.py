@@ -30,8 +30,9 @@ def build(raw):
     datasets = []
     for i, oblast in enumerate(OBLASTS):
         regional = [r for r in rows if r[1] == oblast]
-        rayons = sorted({r[2] for r in regional if r[2]})
-        candidates = [r for r in regional if r[2]]
+        rayons = sorted({r[2] for r in regional if r[2] and r[2] not in DIRECT[i]})
+        candidates = [r for r in regional if r[2] in rayons and not
+            (r[0] in DIRECT[i] and r[3] == 'г.')]
         inferred = []
         for row in regional:
             if row[0] in DIRECT[i] and row[3] == 'г.':
