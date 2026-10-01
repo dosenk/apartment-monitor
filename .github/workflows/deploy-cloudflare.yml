@@ -28,7 +28,7 @@ jobs:
         with:
           node-version: '22'
       - name: Test parsing and search windows
-        run: node --test cloudflare/logic.test.mjs
+        run: node --test cloudflare/*.test.mjs
       - name: Prepare database and migrate sent listings
         run: |
           test -n "$CLOUDFLARE_ACCOUNT_ID"
