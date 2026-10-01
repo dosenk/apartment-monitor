@@ -35,4 +35,14 @@ jobs:
                       print('realt filters',str(data.get('objectListingFilters'))[:4500])
                       print('realt metro names', sorted({v.get('metroStationName') for v in items if v.get('metroStationName')}))
               except Exception as e: print(source, 'ERROR',type(e).__name__,str(e)[:200])
+          try:
+              network=json.loads(get('https://www.citylines.co/api/minsk/raw_source/stations'))
+              features=network.get('features',[]) if isinstance(network,dict) else network
+              for feature in features:
+                  props=feature.get('properties',{})
+                  tags=json.loads(props.get('osm_tags','{}'))
+                  name=tags.get('name:ru') or props.get('name')
+                  lines=[x.get('line','') for x in props.get('lines',[])]
+                  print('STATION',name,feature.get('geometry',{}).get('coordinates'),lines)
+          except Exception as e: print('METRO DATA ERROR',type(e).__name__,str(e)[:200])
           PY
