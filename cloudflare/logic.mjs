@@ -117,7 +117,10 @@ export function kufar(data) {
           rooms: /^\d+$/.test(String(attrs.rooms)) ? Number(attrs.rooms) : null,
           latitude: Number(coords[1]), longitude: Number(coords[0]),
           publishedAt: x.list_time, photo,
-          metroNames: (x.ad_parameters || []).find(p => p.p === 'metro')?.vl || [],
+          metroNames: (() => {
+            const names = (x.ad_parameters || []).find(p => p.p === 'metro')?.vl;
+            return Array.isArray(names) ? names : names ? [names] : [];
+          })(),
         };
       } catch { return null; }
     }).filter(Boolean),
