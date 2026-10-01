@@ -5,3 +5,4 @@ CREATE TABLE IF NOT EXISTS scan_runs (id TEXT PRIMARY KEY, start TEXT NOT NULL, 
   stage TEXT NOT NULL, page INTEGER NOT NULL, cursor TEXT, header_sent INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS pending (run_id TEXT NOT NULL, key TEXT NOT NULL, published_at TEXT NOT NULL,
   item TEXT NOT NULL, PRIMARY KEY (run_id, key));
+CREATE TABLE IF NOT EXISTS scan_preferences (run_id TEXT PRIMARY KEY, settings TEXT NOT NULL);
