@@ -38,7 +38,11 @@ jobs:
           error=info.get('last_error_message','').lower()
           print('Last delivery failure:', 'HTTP 500' if '500' in error else 'HTTP 503' if '503' in error else 'none' if not error else 'other')
           time.sleep(8)
-          result=call(info['url'],{'update_id':int(time.time()),'message':{'message_id':0,'chat':{'id':int(os.environ['TELEGRAM_CHAT_ID'])},'text':'/settings'}},{'X-Telegram-Bot-Api-Secret-Token':hashlib.sha256(bot.encode()).hexdigest()})
+          account=os.environ['CLOUDFLARE_ACCOUNT_ID']
+          cf=call(f'https://api.cloudflare.com/client/v4/accounts/{account}/workers/subdomain',headers={'Authorization':'Bearer '+os.environ['CLOUDFLARE_API_TOKEN']})
+          expected='https://apartment-monitor-bot.'+cf['result']['subdomain']+'.workers.dev/telegram'
+          print('Webhook targets our Worker:',info['url']==expected)
+          result=call(expected,{'update_id':int(time.time()),'message':{'message_id':0,'chat':{'id':int(os.environ['TELEGRAM_CHAT_ID'])},'text':'/settings'}},{'X-Telegram-Bot-Api-Secret-Token':hashlib.sha256(bot.encode()).hexdigest()})
           print('Recovery request HTTP:',result.get('http_status',200))
           print('Recovery request ok:',result.get('ok',False))
           time.sleep(10)
