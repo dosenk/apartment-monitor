@@ -1,0 +1,64 @@
+name: Diagnose timer failure categories
+on:
+  push:
+    paths: ['.github/workflows/diagnose-schedule-safe.yml']
+permissions:
+  contents: read
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+    steps:
+      - name: Inspect only boolean health checks and fixed error categories
+        run: |
+          python - <<'PY'
+          import os,json,urllib.request,urllib.error,time
+          base='https://api.cloudflare.com/client/v4/accounts/'+os.environ['CLOUDFLARE_ACCOUNT_ID']
+          def api(path,payload=None):
+              req=urllib.request.Request(base+path,data=json.dumps(payload).encode() if payload is not None else None,headers={'Authorization':'Bearer '+os.environ['CLOUDFLARE_API_TOKEN'],'Content-Type':'application/json'})
+              try:
+                  with urllib.request.urlopen(req,timeout=30) as r: data=json.load(r)
+              except urllib.error.HTTPError as e:
+                  e.read();print('Diagnostic API HTTP:',e.code);return None
+              if not data.get('success'): print('Diagnostic API success:',False); return None
+              return data['result']
+          schedules=api('/workers/scripts/apartment-monitor-bot/schedules')
+          print('Cron configured:', bool(schedules))
+          dbs=api('/d1/database?name=apartment-monitor-state&per_page=100')
+          db=next(x for x in dbs if x['name']=='apartment-monitor-state')['uuid']
+          def query(sql,params=[]):
+              data=api('/d1/database/'+db+'/query',{'sql':sql,'params':params})
+              return data[0]['results'] if data else []
+          owner=os.environ['TELEGRAM_CHAT_ID'].strip()
+          print('Owner has saved settings:',bool(query('SELECT 1 FROM search_preferences WHERE chat_id=?',[owner])))
+          print('Owner authorized:',bool(query('SELECT 1 FROM bot_users WHERE chat_id=? AND authorized=1',[owner])))
+          print('Scan lock active:',bool(query('SELECT 1 FROM locks WHERE name=? AND expires>?',['scan:'+owner,int(time.time()*1000)])))
+          print('Unfinished scan exists:',bool(query('SELECT 1 FROM scan_runs LIMIT 1')))
+          instances=api('/workflows/apartment-monitor-scan/instances?per_page=10')
+          patterns={'source_http_403':'source http 403','source_http_429':'source http 429','source_http_5xx':'source http 5',
+            'onliner_format':'onliner format','realt_format':'realt format','kufar_format':'kufar format',
+            'scan_lock_expired':'scan lock expired','scan_lock_timeout':'scan lock held',
+            'page_limit':'page limit','telegram_blocked':'bot was blocked','telegram_rate_limit':'too many requests',
+            'cpu_limit':'cpu','workflow_quota':'limit','d1_error':'d1_error','fetch_timeout':'timeout',
+            'scan_state_missing':'scan state missing','unknown_scan_type':'unknown scan type'}
+          for row in instances or []:
+              detail=api('/workflows/apartment-monitor-scan/instances/'+row['id'])
+              if not detail: continue
+              errors=[]
+              def walk(obj):
+                  if isinstance(obj,dict):
+                      err=obj.get('error')
+                      if isinstance(err,dict) and err.get('message'): errors.append(str(err['message']).lower())
+                      for key,value in obj.items():
+                          if key not in ['params','output','logs','payload']: walk(value)
+                  elif isinstance(obj,list):
+                      for value in obj: walk(value)
+              walk(detail)
+              categories=sorted({name for name,pattern in patterns.items() if any(pattern in e for e in errors)})
+              if errors and not categories: categories=['unclassified_error']
+              print('Recent workflow status:', row.get('status','unknown'),'error categories:',','.join(categories) or 'none')
+          PY
