@@ -1,8 +1,74 @@
 import { WorkflowEntrypoint } from 'cloudflare:workers';
 import { BUTTON, interval, label, matches, onliner, realt, kufar, caption } from './logic.mjs';
+import { LINES, STATIONS, preferences, toggleStation, toggleOnliner } from './metro.mjs';
 
 const AGENT = 'ApartmentMonitor/1.0 (personal rental alerts)';
-const keyboard = { keyboard: [[{ text: BUTTON }]], resize_keyboard: true, is_persistent: true };
+const SETTINGS_BUTTON = '⚙️ Настроить метро';
+const keyboard = { keyboard: [[{ text: BUTTON }], [{ text: SETTINGS_BUTTON }]],
+  resize_keyboard: true, is_persistent: true };
+
+async function readPreferences(env) {
+  const value = (await env.DB.prepare("SELECT value FROM meta WHERE key='search_preferences'").first())?.value;
+  try { return preferences(JSON.parse(value)); } catch { return preferences(null); }
+}
+
+async function savePreferences(env, selected) {
+  await env.DB.prepare(`INSERT INTO meta(key,value) VALUES ('search_preferences',?)
+    ON CONFLICT(key) DO UPDATE SET value=excluded.value`).bind(JSON.stringify(selected)).run();
+}
+
+function menu(screen, selected) {
+  const pick = (label, data) => ({ text: label, callback_data: `prefs:${data}` });
+  if (screen.startsWith('stations:')) {
+    const line = Number(screen.split(':')[1]);
+    const title = LINES.find(x => x.id === line)?.name || LINES[0].name;
+    const index = LINES.some(x => x.id === line) ? line : 1;
+    const stationButtons = STATIONS.flatMap((station, i) => station[1] === index
+      ? [pick(`${selected.stations.includes(i) ? '☑️' : '☐'} ${station[0]}`, `station:${i}`)] : []);
+    return {
+      text: `🚇 Realt и Kufar · ${title}\nОтметьте станции. Радиус — 3 км от выбранной станции.\n` +
+        `Если станций нет, действует прежний район Якуба Коласа (3 км).`,
+      inline_keyboard: [
+        LINES.map(x => pick(`${index === x.id ? '• ' : ''}${x.id}-я линия`, `stations:${x.id}`)),
+        ...stationButtons.map(button => [button]),
+        [pick('Сбросить станции', 'reset:stations'), pick('⬅️ Настройки', 'home')],
+      ],
+    };
+  }
+  if (screen === 'onliner') {
+    const options = [['near', 'Возле метро (до 3 км)'], ...LINES.map(x => [String(x.id), x.name])];
+    return {
+      text: '🚇 Onliner\nВыберите линии или все станции. Поиск использует координаты квартир и радиус 3 км.\n' +
+        'Если ничего не выбрано, действует прежний район Якуба Коласа (3 км).',
+      inline_keyboard: [
+        ...options.map(([id, name]) => [pick(`${selected.onliner.includes(id) ? '☑️' : '☐'} ${name}`, `option:${id}`)]),
+        [pick('Сбросить Onliner', 'reset:onliner'), pick('⬅️ Настройки', 'home')],
+      ],
+    };
+  }
+  const stationNames = selected.stations.map(i => STATIONS[i]?.[0]).filter(Boolean);
+  const onlinerNames = selected.onliner.map(id => id === 'near' ? 'возле метро' : LINES.find(x => String(x.id) === id)?.name).filter(Boolean);
+  return {
+    text: '⚙️ Настройки метро\n' +
+      `Realt + Kufar: ${stationNames.length ? stationNames.join(', ') : 'район Якуба Коласа (3 км)'}\n` +
+      `Onliner: ${onlinerNames.length ? onlinerNames.join(', ') : 'район Якуба Коласа (3 км)'}\n\n` +
+      'Цена до $500. Изменения действуют с новой проверки; уже отправленные объявления не повторяются.',
+    inline_keyboard: [
+      [pick('🚇 Станции Realt + Kufar', 'stations:1')],
+      [pick('🚇 Линии Onliner', 'onliner')],
+      [pick('Готово', 'close')],
+    ],
+  };
+}
+
+async function showMenu(env, screen, messageId) {
+  const selected = await readPreferences(env);
+  const view = menu(screen, selected);
+  const payload = { chat_id: env.TELEGRAM_CHAT_ID, text: view.text,
+    reply_markup: { inline_keyboard: view.inline_keyboard } };
+  if (messageId) await telegram(env, 'editMessageText', { ...payload, message_id: messageId });
+  else await telegram(env, 'sendMessage', payload);
+}
 
 async function fetchPage(url, parser) {
   const headers = new URL(url).hostname === 'api.kufar.by' ?
@@ -65,9 +131,14 @@ export class ApartmentScan extends WorkflowEntrypoint {
           (await env.DB.prepare("SELECT value FROM meta WHERE key='covered_until'").first())?.value || null);
         const bounds = interval(kind, event.payload?.requestedAt || event.schedule?.scheduledTime || Date.now(), cursor);
         if (bounds.start >= bounds.end) return { skipped: true, bounds };
-        await step.do('init-run', () => env.DB.prepare(`INSERT OR IGNORE INTO scan_runs
-          (id,start,end,stage,page,cursor,header_sent) VALUES (?,?,?,'onliner',1,NULL,0)`)
-          .bind(runId, bounds.start, bounds.end).run());
+        const selected = await step.do('read-settings', () => readPreferences(env));
+        await step.do('init-run', () => env.DB.batch([
+          env.DB.prepare(`INSERT OR IGNORE INTO scan_runs
+            (id,start,end,stage,page,cursor,header_sent) VALUES (?,?,?,'onliner',1,NULL,0)`)
+            .bind(runId, bounds.start, bounds.end),
+          env.DB.prepare('INSERT OR IGNORE INTO scan_preferences(run_id,settings) VALUES (?,?)')
+            .bind(runId, JSON.stringify(selected)),
+        ]));
       } else {
         const renewed = await step.do('renew-lock', async () => env.DB.prepare(
           "UPDATE locks SET expires=? WHERE name='scan' AND owner=?")
@@ -76,6 +147,10 @@ export class ApartmentScan extends WorkflowEntrypoint {
       }
       let state = await step.do('load-run', () => env.DB.prepare('SELECT * FROM scan_runs WHERE id=?').bind(runId).first());
       if (!state) throw Error('Scan state missing');
+      const selected = await step.do('load-settings', async () => {
+        const row = await env.DB.prepare('SELECT settings FROM scan_preferences WHERE run_id=?').bind(runId).first();
+        return row ? preferences(JSON.parse(row.settings)) : preferences(null);
+      });
       const cutoff = Date.parse(state.start);
       const onlinerParams = new URLSearchParams();
       for (const rooms of ['1_room', '2_rooms', '3_rooms', '4_rooms', '5_rooms', '6_rooms']) onlinerParams.append('rent_type[]', rooms);
@@ -97,7 +172,7 @@ export class ApartmentScan extends WorkflowEntrypoint {
           parser = kufar;
         } else throw Error(`Unknown source ${source}`);
         const batch = await step.do(`fetch-${source}-${page}`, () => fetchPage(url, parser));
-        const candidates = batch.items.filter(x => matches(x, state.start, state.end));
+        const candidates = batch.items.filter(x => matches(x, state.start, state.end, selected));
         const older = batch.items.some(x => Date.parse(x.publishedAt) < cutoff);
         let done;
         if (source === 'onliner') done = !batch.items.length || page >= batch.lastPage || older;
@@ -153,6 +228,7 @@ export class ApartmentScan extends WorkflowEntrypoint {
           ON CONFLICT(key) DO UPDATE SET value=excluded.value`).bind(state.end),
         env.DB.prepare('DELETE FROM pending WHERE run_id=?').bind(runId),
         env.DB.prepare('DELETE FROM scan_runs WHERE id=?').bind(runId),
+        env.DB.prepare('DELETE FROM scan_preferences WHERE run_id=?').bind(runId),
       ]));
       return { bounds: { start: state.start, end: state.end }, delivered: true };
     } finally {
@@ -172,21 +248,55 @@ export default {
     if (url.pathname !== '/telegram' || request.method !== 'POST') return new Response('Not found', { status: 404 });
     if (request.headers.get('X-Telegram-Bot-Api-Secret-Token') !== env.WEBHOOK_SECRET) return new Response('Forbidden', { status: 403 });
     const update = await request.json();
-    if (String(update.callback_query?.message?.chat?.id) === env.TELEGRAM_CHAT_ID && update.callback_query?.data === 'check_updates') {
-      const instance = await env.SCAN.create({ params: { kind: 'check', requestedAt: Date.now() } });
-      await telegram(env, 'answerCallbackQuery', { callback_query_id: update.callback_query.id, text: 'Проверяю новые квартиры…' });
-      return Response.json({ ok: true, id: instance.id });
+    if (String(update.callback_query?.message?.chat?.id) === env.TELEGRAM_CHAT_ID) {
+      const callback = update.callback_query;
+      const data = callback.data || '';
+      if (data === 'check_updates') {
+        const instance = await env.SCAN.create({ params: { kind: 'check', requestedAt: Date.now() } });
+        await telegram(env, 'answerCallbackQuery', { callback_query_id: callback.id, text: 'Проверяю новые квартиры…' });
+        return Response.json({ ok: true, id: instance.id });
+      }
+      if (data.startsWith('prefs:')) {
+        let screen = 'home';
+        const action = data.slice(6);
+        const selected = await readPreferences(env);
+        if (/^station:\d+$/.test(action)) {
+          const index = Number(action.split(':')[1]);
+          screen = `stations:${STATIONS[index]?.[1] || 1}`;
+          if (STATIONS[index]) await savePreferences(env, toggleStation(selected, index));
+        } else if (/^stations:[123]$/.test(action)) screen = action;
+        else if (/^option:(near|[123])$/.test(action)) {
+          screen = 'onliner';
+          await savePreferences(env, toggleOnliner(selected, action.split(':')[1]));
+        } else if (action === 'onliner') screen = 'onliner';
+        else if (action === 'reset:stations' || action === 'reset:onliner') {
+          const target = action.split(':')[1];
+          await savePreferences(env, { ...selected, [target]: [] });
+          screen = target === 'stations' ? 'stations:1' : 'onliner';
+        } else if (action === 'close') {
+          await telegram(env, 'answerCallbackQuery', { callback_query_id: callback.id });
+          await telegram(env, 'editMessageText', { chat_id: env.TELEGRAM_CHAT_ID,
+            message_id: callback.message.message_id, text: 'Настройки метро сохранены.' });
+          return Response.json({ ok: true });
+        }
+        await telegram(env, 'answerCallbackQuery', { callback_query_id: callback.id });
+        await showMenu(env, screen, callback.message.message_id);
+        return Response.json({ ok: true });
+      }
     }
     if (String(update.message?.chat?.id) !== env.TELEGRAM_CHAT_ID) return Response.json({ ok: true });
     if (update.message?.text?.startsWith('/start')) {
       await telegram(env, 'sendMessage', { chat_id: env.TELEGRAM_CHAT_ID,
-        text: 'Кнопка «Проверить новые квартиры» теперь внизу чата. Нажмите её для проверки.',
+        text: 'Внизу чата доступны проверка квартир и настройка метро.',
         reply_markup: keyboard });
+      await showMenu(env, 'home');
     } else if (update.message?.text === BUTTON) {
       const instance = await env.SCAN.create({ params: { kind: 'check', requestedAt: Date.now() } });
       await telegram(env, 'sendMessage', { chat_id: env.TELEGRAM_CHAT_ID,
         text: 'Проверяю новые квартиры…', reply_markup: keyboard });
       return Response.json({ ok: true, id: instance.id });
+    } else if (update.message?.text === SETTINGS_BUTTON || update.message?.text === '/settings') {
+      await showMenu(env, 'home');
     }
     return Response.json({ ok: true });
   },
