@@ -108,6 +108,7 @@ export function realt(raw) {
         address: x.address || "Минск", byn, usd, rooms: x.rooms || null,
         city: x.townName || null,
         region: x.stateRegionName || null,
+        rayon: x.stateDistrictName || null,
         latitude: Number(x.location?.[1]), longitude: Number(x.location?.[0]),
         publishedAt: x.createdAt, photo: x.images?.[0] || null,
         metroNames: x.metroStationName ? [x.metroStationName] : [],
@@ -138,6 +139,10 @@ export function kufar(data) {
             return x.ad_parameters?.find(p => p.p === 'area')?.vl || null;
           })(),
           region: x.ad_parameters?.find(p => p.p === 'region')?.vl || null,
+          rayon: (() => {
+            const area = x.ad_parameters?.find(p => p.p === 'area')?.vl;
+            return typeof area === 'string' && area.endsWith(' район') ? area : null;
+          })(),
           byn: Number(x.price_byn) / 100, usd: Number(x.price_usd) / 100,
           rooms: /^\d+$/.test(String(attrs.rooms)) ? Number(attrs.rooms) : null,
           latitude: Number(coords[1]), longitude: Number(coords[0]),
