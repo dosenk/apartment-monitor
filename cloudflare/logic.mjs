@@ -1,5 +1,7 @@
 import { matchesMetro } from './metro.mjs';
 import { matchesDistrict } from './districts.mjs';
+import { selectedCity, cityName } from './location.mjs';
+import { preferences } from './metro.mjs';
 
 export const CENTER = [53.915833, 27.583333];
 export const BUTTON = "🔄 Проверить новые квартиры";
@@ -44,11 +46,15 @@ export function distanceKm(lat1, lon1, lat2, lon2) {
 }
 
 export function matches(item, start, end, selected) {
+  selected = preferences(selected);
   const time = Date.parse(item.publishedAt);
   const maxByn = preferencesPrice(selected);
+  const cityIndex = selectedCity(item, selected);
+  const inMinsk = cityName(cityIndex) === 'Минск';
   return Number.isFinite(time) && time >= Date.parse(start) && time < Date.parse(end) &&
     (maxByn === null || (Number.isFinite(item.byn) && item.byn <= maxByn)) &&
-    matchesMetro(item, selected, distanceKm, CENTER) && matchesDistrict(item, selected);
+    cityIndex !== null && (!inMinsk || (matchesMetro(item, selected, distanceKm, CENTER) &&
+      matchesDistrict(item, selected)));
 }
 
 export function dueScan(frequency, timestamp) {
@@ -71,6 +77,7 @@ export function onliner(data) {
         return {
           key: `onliner:${x.id}`, url: x.url,
           address: x.location?.user_address || x.location?.address || "Минск",
+          city: (x.location?.user_address || x.location?.address || '').split(',')[0],
           byn: Number(x.price.converted.BYN.amount),
           usd: Number(x.price.converted.USD.amount),
           rooms: /^\d+_rooms?$/.test(x.rent_type) ? Number(x.rent_type.split("_")[0]) : null,
@@ -98,6 +105,8 @@ export function realt(raw) {
         key: `realt:${x.code}`,
         url: `https://realt.by/rent-flat-for-long/object/${x.code}/`,
         address: x.address || "Минск", byn, usd, rooms: x.rooms || null,
+        city: x.townName || null,
+        region: x.stateRegionName || null,
         latitude: Number(x.location?.[1]), longitude: Number(x.location?.[0]),
         publishedAt: x.createdAt, photo: x.images?.[0] || null,
         metroNames: x.metroStationName ? [x.metroStationName] : [],
@@ -122,6 +131,12 @@ export function kufar(data) {
         return {
           key: `kufar:${x.ad_id}`, url: x.ad_link,
           address: account.address || x.subject || "Минск",
+          city: (() => {
+            const region = x.ad_parameters?.find(p => p.p === 'region')?.vl;
+            if (region === 'Минск') return 'Минск';
+            return x.ad_parameters?.find(p => p.p === 'area')?.vl || null;
+          })(),
+          region: x.ad_parameters?.find(p => p.p === 'region')?.vl || null,
           byn: Number(x.price_byn) / 100, usd: Number(x.price_usd) / 100,
           rooms: /^\d+$/.test(String(attrs.rooms)) ? Number(attrs.rooms) : null,
           latitude: Number(coords[1]), longitude: Number(coords[0]),
