@@ -42,7 +42,7 @@ jobs:
               'chat': {'id': chat_id, 'type': 'private'},
               'from': {'id': chat_id, 'is_bot': False, 'first_name': 'Owner'},
               'text': '/start'}}
-          for attempt in range(36):
+          for attempt in range(4):
               request = urllib.request.Request(url + '/telegram',
                   data=json.dumps(payload).encode(),
                   headers={'Content-Type': 'application/json',
@@ -54,8 +54,8 @@ jobs:
                   print('Telegram /start handled; menu and keyboard sent to configured chat')
                   break
               except Exception as error:
-                  if attempt == 35:
+                  if attempt == 3:
                       raise
-                  print(f'Waiting for deployed menu: attempt {attempt + 1}, {type(error).__name__}')
+                  print(f'Waiting for deployed menu: attempt {attempt + 1}, {type(error).__name__}: {getattr(error, "read", lambda: b"")().decode()[:500]}', flush=True)
                   time.sleep(10)
           PY
