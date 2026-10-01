@@ -35,12 +35,10 @@ jobs:
           output = {}
           for name in names:
               if name == 'Партизанский':
-                  url = 'https://nominatim.openstreetmap.org/lookup?' + urllib.parse.urlencode({
-                      'osm_ids': 'R59257', 'format': 'jsonv2', 'polygon_geojson': '1'})
-              else:
-                  url = 'https://nominatim.openstreetmap.org/search?' + urllib.parse.urlencode({
-                      'q': f'{aliases[name]} раён, Мінск, Беларусь', 'format': 'jsonv2',
-                      'polygon_geojson': '1', 'layer': 'address', 'limit': 10})
+                  continue
+              url = 'https://nominatim.openstreetmap.org/search?' + urllib.parse.urlencode({
+                  'q': f'{aliases[name]} раён, Мінск, Беларусь', 'format': 'jsonv2',
+                  'polygon_geojson': '1', 'layer': 'address', 'limit': 10})
               request = urllib.request.Request(url, headers={
                   'User-Agent': 'apartment-monitor/1.0 (https://github.com/dosenk/apartment-monitor)'})
               with urllib.request.urlopen(request, timeout=30) as response:
