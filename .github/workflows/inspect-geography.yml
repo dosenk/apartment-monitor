@@ -9,7 +9,7 @@ jobs:
       - name: Query public data
         run: |
           python - <<'PY'
-          import urllib.request,json,re
+          import urllib.request,json,re,zlib,base64
           urls=[
             'https://ak.api.onliner.by/search/apartments?order=created_at%3Adesc&page=1',
             'https://api.kufar.by/search-api/v2/search/rendered-paginated?cat=1010&typ=let&size=30&sort=lst.d&lang=ru',
@@ -29,6 +29,14 @@ jobs:
                 p=json.loads(m.group(1))['props']['pageProps'];print('KEYS',list(p),'TOTAL',p.get('pagination'),'SAMPLE',[(x.get('townName'),x.get('stateRegionName'),x.get('stateDistrictName'),x.get('location')) for x in p['objects'][:4]])
               else:
                 s=body.decode('utf-8','replace')
-                print('SQL_STRUCTURE',s[1500:3900], 'INSERT_SAMPLE',s[s.find('INSERT INTO'):s.find('INSERT INTO')+1300])
+                rows=[]
+                for match in re.finditer(r"^\\s*\\(\\d+, '([^']*)', '([^']*)', (?:'([^']*)'|NULL), (?:'[^']*'|NULL), '([^']*)', '([^']*)', '([^']*)'",s,re.M):
+                  name,obl,raion,tip,lat,lon=match.groups()
+                  if tip in ('г.','гп','рп'): rows.append([name,obl,raion,tip,lat,lon])
+                print('COUNTS',len(rows),'MINSK', [x for x in rows if x[0] in ('Минск','Заславль','Брест','Барановичи')])
+                packed=base64.b64encode(zlib.compress(json.dumps(rows,ensure_ascii=False,separators=(',',':')).encode(),9)).decode()
+                print('DATA_BEGIN')
+                for i in range(0,len(packed),900):print(packed[i:i+900])
+                print('DATA_END')
             except Exception as e:print('ERROR',url,repr(e))
           PY
