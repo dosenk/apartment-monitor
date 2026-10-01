@@ -1,8 +1,6 @@
 import { matchesMetro } from './metro.mjs';
 
 export const CENTER = [53.915833, 27.583333];
-export const RADIUS_KM = 3;
-export const MAX_USD = 500;
 export const BUTTON = "🔄 Проверить новые квартиры";
 const MINSK_OFFSET = 3 * 60 * 60 * 1000;
 
@@ -46,10 +44,14 @@ export function distanceKm(lat1, lon1, lat2, lon2) {
 
 export function matches(item, start, end, selected) {
   const time = Date.parse(item.publishedAt);
+  const maxByn = preferencesPrice(selected);
   return Number.isFinite(time) && time >= Date.parse(start) && time < Date.parse(end) &&
-    Number.isFinite(item.usd) && item.usd <= MAX_USD &&
-    Number.isFinite(item.latitude) && Number.isFinite(item.longitude) &&
-    matchesMetro(item, selected, distanceKm, CENTER, RADIUS_KM);
+    (maxByn === null || (Number.isFinite(item.byn) && item.byn <= maxByn)) &&
+    matchesMetro(item, selected, distanceKm, CENTER);
+}
+
+function preferencesPrice(selected) {
+  return Number.isFinite(selected?.maxByn) && selected.maxByn > 0 ? selected.maxByn : null;
 }
 
 export function onliner(data) {
