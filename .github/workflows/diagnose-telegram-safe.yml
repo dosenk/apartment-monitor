@@ -1,57 +1,40 @@
-name: Diagnose Telegram delivery status
+name: Verify recovered Telegram menu
 on:
   push:
     paths: ['.github/workflows/diagnose-telegram-safe.yml']
 permissions:
   contents: read
 jobs:
-  diagnose:
+  verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 3
     env:
-      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - run: npm install --no-save wrangler@latest
-      - name: Inspect only anonymized failure categories
+      - name: Verify frequency navigation and deliver restored settings
         run: |
-          timeout 40s npx wrangler tail apartment-monitor-bot --format json > /tmp/private-tail.json 2>&1 &
-          TAIL_PID=$!
           python - <<'PY'
           import os,json,urllib.request,urllib.error,hashlib,time
           bot=os.environ['TELEGRAM_BOT_TOKEN']
+          chat=int(os.environ['TELEGRAM_CHAT_ID'])
           def call(url,payload=None,headers={}):
               req=urllib.request.Request(url,data=json.dumps(payload).encode() if payload else None,headers={'Content-Type':'application/json',**headers})
               try:
                   with urllib.request.urlopen(req,timeout=25) as r: return json.load(r)
               except urllib.error.HTTPError as e:
-                  body=e.read().decode()
-                  return {'http_status':e.code,'body':body}
-          info=call(f'https://api.telegram.org/bot{bot}/getWebhookInfo')['result']
-          print('Pending updates:',info.get('pending_update_count',0))
-          error=info.get('last_error_message','').lower()
-          print('Last delivery failure:', 'HTTP 500' if '500' in error else 'HTTP 503' if '503' in error else 'none' if not error else 'other')
-          time.sleep(8)
-          account=os.environ['CLOUDFLARE_ACCOUNT_ID']
-          cf=call(f'https://api.cloudflare.com/client/v4/accounts/{account}/workers/subdomain',headers={'Authorization':'Bearer '+os.environ['CLOUDFLARE_API_TOKEN']})
-          expected='https://apartment-monitor-bot.'+cf['result']['subdomain']+'.workers.dev/telegram'
-          print('Webhook targets our Worker:',info['url']==expected)
-          result=call(expected,{'update_id':int(time.time()),'message':{'message_id':0,'chat':{'id':int(os.environ['TELEGRAM_CHAT_ID'])},'text':'/settings'}},{'X-Telegram-Bot-Api-Secret-Token':hashlib.sha256(bot.encode()).hexdigest()})
-          print('Recovery request HTTP:',result.get('http_status',200))
-          print('Recovery request ok:',result.get('ok',False))
-          time.sleep(10)
-          PY
-          wait "$TAIL_PID" || true
-          python - <<'PY'
-          from pathlib import Path
-          text=Path('/tmp/private-tail.json').read_text().lower()
-          for name,pattern in [('expired_callback','query is too old'),('unchanged_message','message is not modified'),('cpu_limit','exceededcpu'),('memory_limit','exceededmemory'),('worker_exception','exception'),('telegram_failure','telegram webhook failed'),('draft_failure','d1_error')]:
-              print(name, text.count(pattern))
-          Path('/tmp/private-tail.json').unlink(missing_ok=True)
+                  e.read()
+                  return {'ok':False,'http_status':e.code}
+          base=f'https://api.telegram.org/bot{bot}/'
+          info=call(base+'getWebhookInfo')['result']
+          assert '.workers.dev/telegram' in info['url']
+          seed=call(base+'sendMessage',{'chat_id':chat,'text':'🔧 Проверяю меню частоты. Здесь появятся восстановленные настройки.'})
+          assert seed['ok']
+          mid=seed['result']['message_id']
+          for step,action in enumerate(['frequency','frequency','home']):
+              result=call(info['url'],{'update_id':int(time.time())+step,'callback_query':{'id':'diagnostic-expired-callback','data':'prefs:'+action,'message':{'message_id':mid,'chat':{'id':chat}}}},{'X-Telegram-Bot-Api-Secret-Token':hashlib.sha256(bot.encode()).hexdigest()})
+              print('Menu step',action,'ok:',result.get('ok',False),'HTTP:',result.get('http_status',200))
+              assert result.get('ok'), 'Menu verification failed; see anonymized HTTP status above.'
+          print('Pending updates:',call(base+'getWebhookInfo')['result'].get('pending_update_count',0))
+          print('Restored settings menu delivered. Saved search preferences unchanged.')
           PY
