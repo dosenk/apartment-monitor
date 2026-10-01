@@ -1,0 +1,29 @@
+name: Refresh Telegram location settings
+on:
+  push:
+    paths: [.github/workflows/refresh-location-menu.yml]
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Send updated settings menu
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          node --input-type=module - <<'JS'
+          import { menu } from './cloudflare/telegram-menu.mjs';
+          import { preferences } from './cloudflare/metro.mjs';
+          const view = menu('home', preferences({ cities: [], locationChosen: false }));
+          const payload = { chat_id: process.env.TELEGRAM_CHAT_ID,
+            text: view.text, reply_markup: { inline_keyboard: view.inline_keyboard } };
+          const response = await fetch('https://api.telegram.org/bot' + process.env.TELEGRAM_BOT_TOKEN + '/sendMessage',
+            { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+          const result = await response.json();
+          if (!result.ok) throw Error(result.description);
+          console.log('Updated settings menu delivered.');
+          JS
