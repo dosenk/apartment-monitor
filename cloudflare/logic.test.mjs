@@ -1,7 +1,39 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { interval, matches, onliner, realt, kufar } from './logic.mjs';
+import { interval, matches, onliner, realt, kufar, dueScan } from './logic.mjs';
 import { STATIONS, toggleStation, toggleOnliner, preferences } from './metro.mjs';
+import { DISTRICTS, matchesDistrict } from './districts.mjs';
+
+test('frequency choices fire on Minsk clock boundaries', () => {
+  assert.equal(dueScan('scheduled', Date.parse('2026-10-01T06:00:00Z')), 'morning');
+  assert.equal(dueScan('scheduled', Date.parse('2026-10-01T11:00:00Z')), 'midday');
+  assert.equal(dueScan('scheduled', Date.parse('2026-10-01T19:00:00Z')), 'evening');
+  assert.equal(dueScan('scheduled', Date.parse('2026-10-01T06:10:00Z')), null);
+  assert.equal(dueScan('10m', Date.parse('2026-10-01T06:10:00Z')), 'check');
+  assert.equal(dueScan('30m', Date.parse('2026-10-01T06:10:00Z')), null);
+  assert.equal(dueScan('1h', Date.parse('2026-10-01T06:00:00Z')), 'check');
+  assert.equal(dueScan('4h', Date.parse('2026-10-01T09:00:00Z')), 'check');
+  assert.equal(dueScan('8h', Date.parse('2026-10-01T05:00:00Z')), 'check');
+});
+
+test('each Minsk district can be selected independently and combined with metro', () => {
+  assert.equal(DISTRICTS.length, 9);
+  const sample = new Map();
+  for (let lat = 53.84; lat < 53.96; lat += 0.005) {
+    for (let lon = 27.43; lon < 27.70; lon += 0.005) {
+      const item = { latitude: lat, longitude: lon };
+      const districts = DISTRICTS.filter(name => matchesDistrict(item, { districts: [name] }));
+      if (districts.length === 1) sample.set(districts[0], item);
+    }
+  }
+  assert.deepEqual([...sample.keys()].sort(), [...DISTRICTS].sort());
+  const item = { ...sample.get('Советский'), key: 'onliner:1', byn: 1200,
+    publishedAt: '2026-10-01T07:00:00Z' };
+  assert.ok(matches(item, '2026-10-01T06:00:00Z', '2026-10-01T08:00:00Z',
+    { districts: ['Советский'], stations: [], onliner: [], maxByn: null, radiusKm: null }));
+  assert.ok(!matches(item, '2026-10-01T06:00:00Z', '2026-10-01T08:00:00Z',
+    { districts: ['Октябрьский'], stations: [], onliner: [], maxByn: null, radiusKm: null }));
+});
 
 test('scheduled windows and a manual check share one advancing cursor', () => {
   const noon = Date.parse('2026-09-30T11:00:00Z');
