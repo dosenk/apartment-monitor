@@ -1,0 +1,21 @@
+name: Build Belarus settlement directory
+on:
+  push:
+    branches: [fix/location-flow-rayons]
+    paths: [.github/workflows/build-directory.yml]
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate administrative directory
+        run: python .github/scripts/build_geography.py
+      - name: Save generated directory
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add cloudflare/geography-*.json
+          git commit -m "Generate complete Belarus settlement directory"
+          git push origin HEAD:fix/location-flow-rayons
