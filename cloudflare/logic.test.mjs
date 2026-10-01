@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { interval, matches, onliner, realt, kufar, dueScan } from './logic.mjs';
 import { STATIONS, toggleStation, toggleOnliner, preferences } from './metro.mjs';
-import { DISTRICTS, matchesDistrict } from './districts.mjs';
+import { DISTRICTS, matchesDistrict, matchesCityDistrict } from './districts.mjs';
 import { CITIES } from './geography.mjs';
 import { OBLASTS, rayons, cities } from './location.mjs';
 
@@ -33,6 +33,21 @@ test('oblast, rayon and city selection searches whole non-Minsk city without Min
       { p: 'area', vl: 'Брест', v: 11 }, { p: 'coordinates', v: [23.73, 52.10] }],
   }] }).items[0];
   assert.ok(matches(kufarItem, start, end, { ...selected, cities: [brest] }));
+  const sample = new Map();
+  for (let lat = 52.05; lat < 52.16; lat += 0.002) {
+    for (let lon = 23.6; lon < 23.85; lon += 0.002) {
+      for (const name of ['Ленинский', 'Московский']) {
+        if (matchesCityDistrict({ latitude: lat, longitude: lon },
+          { cityDistricts: { Брест: [name] } }, 'Брест')) sample.set(name, [lat, lon]);
+      }
+    }
+  }
+  assert.equal(sample.size, 2);
+  const [lat, lon] = sample.get('Ленинский');
+  assert.ok(matches({ ...base, city: 'Брест', latitude: lat, longitude: lon }, start, end,
+    { ...selected, cities: [brest], cityDistricts: { Брест: ['Ленинский'] } }));
+  assert.ok(!matches({ ...base, city: 'Брест', latitude: lat, longitude: lon }, start, end,
+    { ...selected, cities: [brest], cityDistricts: { Брест: ['Московский'] } }));
 });
 
 test('frequency choices fire on Minsk clock boundaries', () => {

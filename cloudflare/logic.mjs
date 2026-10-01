@@ -1,5 +1,5 @@
 import { matchesMetro } from './metro.mjs';
-import { matchesDistrict } from './districts.mjs';
+import { matchesDistrict, matchesCityDistrict } from './districts.mjs';
 import { selectedCity, cityName } from './location.mjs';
 import { preferences } from './metro.mjs';
 
@@ -53,7 +53,8 @@ export function matches(item, start, end, selected) {
   const inMinsk = cityName(cityIndex) === 'Минск';
   return Number.isFinite(time) && time >= Date.parse(start) && time < Date.parse(end) &&
     (maxByn === null || (Number.isFinite(item.byn) && item.byn <= maxByn)) &&
-    cityIndex !== null && (!inMinsk || (matchesMetro(item, selected, distanceKm, CENTER) &&
+    cityIndex !== null && matchesCityDistrict(item, selected, cityName(cityIndex)) &&
+    (!inMinsk || (matchesMetro(item, selected, distanceKm, CENTER) &&
       matchesDistrict(item, selected)));
 }
 

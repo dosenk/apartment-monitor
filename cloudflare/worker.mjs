@@ -1,7 +1,7 @@
 import { WorkflowEntrypoint } from 'cloudflare:workers';
 import { BUTTON, interval, label, matches, onliner, realt, kufar, caption, dueScan } from './logic.mjs';
 import { LINES, STATIONS, FREQUENCIES, preferences, toggleStation, toggleOnliner } from './metro.mjs';
-import { DISTRICTS } from './districts.mjs';
+import { DISTRICTS, CITY_DISTRICTS } from './districts.mjs';
 import { CITIES } from './geography.mjs';
 import { OBLASTS, rayons, cities, cityName, isMinskSelected } from './location.mjs';
 
@@ -85,7 +85,7 @@ function menu(screen, selected) {
   if (screen === 'help') return {
     text: 'ℹ️ Как пользоваться\n\n' +
       '1. Выберите область → район области → город. Можно отметить несколько городов, каждый выбранный город ищется целиком.\n' +
-      '2. Если среди городов есть Минск, можно дополнительно выбрать его районы, метро и радиус. Пустой список районов не ограничивает поиск по районам. Метро и радиус действуют только на объявления Минска.\n' +
+      '2. Для Минска доступны районы, метро и радиус; для Бреста — районы города. Пустой список районов не добавляет фильтр. Метро и радиус действуют только на объявления Минска.\n' +
       '3. При желании задайте максимальную цену в BYN. Число 0 убирает ограничение.\n' +
       '4. Выберите частоту и нажмите «Применить». Кнопка «Текущие настройки» покажет сохранённые параметры; в меню редактирования показан черновик.\n\n' +
       '📏 Радиус: для Realt и Kufar — от выбранных станций; достаточно одной. Для Onliner — от ближайшей к квартире станции, если она на выбранной линии. Если метро не выбрано, радиус считается от площади Якуба Коласа. Без радиуса расстояние не ограничено. Исключение: «Возле метро» в Onliner означает до 1 км, если свой радиус не указан.\n\n' +
@@ -97,6 +97,15 @@ function menu(screen, selected) {
     inline_keyboard: [
       ...DISTRICTS.map((name, index) => [pick(`${selected.districts.includes(name) ? '☑️' : '☐'} ${name}`, `district:${index}`)]),
       [pick('Сбросить районы', 'reset:districts'), pick('⬅️ Настройки', 'home')],
+    ],
+  };
+  if (screen === 'city-districts:Brest') return {
+    text: '🗺 Районы Бреста\nОтметьте нужные районы города. Если ничего не отмечено, фильтр по районам Бреста не применяется.',
+    inline_keyboard: [
+      ...CITY_DISTRICTS.Брест.map((name, index) =>
+        [pick(`${selected.cityDistricts.Брест.includes(name) ? '☑️' : '☐'} ${name}`,
+          `city-district:Brest:${index}`)]),
+      [pick('Сбросить районы', 'reset:city-districts:Brest'), pick('⬅️ Настройки', 'home')],
     ],
   };
   if (screen === 'frequency') return {
@@ -138,6 +147,8 @@ function menu(screen, selected) {
   return {
     text: '⚙️ Настройки поиска · черновик\n' +
       `Города: ${selected.cities.map(cityName).join(', ') || 'не выбраны'}\n` +
+      (selected.cities.some(i => cityName(i) === 'Брест') ?
+        `Районы Бреста: ${selected.cityDistricts.Брест.join(', ') || 'фильтр не задан'}\n` : '') +
       (minsk ? `Realt + Kufar, метро: ${stationNames.join(', ') || 'фильтр не задан'}\n` +
         `Onliner, метро: ${onlinerNames.join(', ') || 'фильтр не задан'}\n` +
         `Районы Минска: ${selected.districts.join(', ') || 'фильтр не задан'}\n` : '') +
@@ -147,6 +158,8 @@ function menu(screen, selected) {
       'Сохраните изменения кнопкой «Применить». Уже отправленные объявления не повторяются.',
     inline_keyboard: [
       [pick('📍 Область → район → город', 'locations')],
+      ...(selected.cities.some(i => cityName(i) === 'Брест') ?
+        [[pick('🗺 Районы Бреста', 'city-districts:Brest')]] : []),
       ...(minsk ? [[pick('🚇 Станции Realt + Kufar', 'stations:1')],
         [pick('🚇 Линии Onliner', 'onliner')], [pick('🗺 Районы Минска', 'districts')]] : []),
       [pick('💰 Цена, BYN', 'input:price'), ...(minsk ? [pick('📏 Радиус, км', 'input:radius')] : [])],
@@ -165,6 +178,8 @@ function settingsSummary(selected) {
   const minsk = isMinskSelected(selected);
   return '📋 Текущие настройки поиска\n' +
     `Города: ${selected.cities.map(cityName).join(', ')}\n` +
+    (selected.cities.some(i => cityName(i) === 'Брест') ?
+      `Районы Бреста: ${selected.cityDistricts.Брест.join(', ') || 'фильтр не задан'}\n` : '') +
     (minsk ? `Realt + Kufar, метро: ${stationNames.join(', ') || 'фильтр не задан'}\n` +
       `Onliner, метро: ${onlinerNames.join(', ') || 'фильтр не задан'}\n` +
       `Районы Минска: ${selected.districts.join(', ') || 'фильтр не задан'}\n` : '') +
@@ -395,6 +410,16 @@ export default {
           if (CITIES[cityIndex]) await saveDraft(env, { ...selected,
             cities: selected.cities.includes(cityIndex) ? selected.cities.filter(x => x !== cityIndex) :
               [...selected.cities, cityIndex] });
+        } else if (action === 'city-districts:Brest') screen = action;
+        else if (/^city-district:Brest:[01]$/.test(action)) {
+          screen = 'city-districts:Brest';
+          const name = CITY_DISTRICTS.Брест[Number(action.split(':')[2])];
+          const old = selected.cityDistricts.Брест;
+          await saveDraft(env, { ...selected, cityDistricts: { ...selected.cityDistricts,
+            Брест: old.includes(name) ? old.filter(x => x !== name) : [...old, name] } });
+        } else if (action === 'reset:city-districts:Brest') {
+          screen = 'city-districts:Brest';
+          await saveDraft(env, { ...selected, cityDistricts: { ...selected.cityDistricts, Брест: [] } });
         } else if (/^station:\d+$/.test(action)) {
           const index = Number(action.split(':')[1]);
           screen = `stations:${STATIONS[index]?.[1] || 1}`;

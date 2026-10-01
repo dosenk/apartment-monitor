@@ -1,8 +1,11 @@
 import data from './districts.json' with { type: 'json' };
+import cityData from './city-districts.json' with { type: 'json' };
 
 // OSM district polygons are stored in the repository. No geocoding request occurs during a scan.
 export const DISTRICTS = ['Центральный', 'Советский', 'Первомайский', 'Партизанский',
   'Заводской', 'Ленинский', 'Октябрьский', 'Московский', 'Фрунзенский'];
+export const CITY_DISTRICTS = Object.fromEntries(Object.entries(cityData)
+  .map(([city, districts]) => [city, Object.keys(districts)]));
 
 function insideRing(lon, lat, ring) {
   let inside = false;
@@ -35,4 +38,12 @@ export function matchesDistrict(item, selected) {
     const geometry = data.districts[name]?.geometry;
     return insideGeometry(lon, lat, geometry);
   });
+}
+
+export function matchesCityDistrict(item, selected, city) {
+  const names = selected?.cityDistricts?.[city] || [];
+  if (!names.length) return true;
+  const lat = item.latitude, lon = item.longitude;
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return false;
+  return names.some(name => insideGeometry(lon, lat, cityData[city]?.[name]));
 }
