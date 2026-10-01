@@ -1,3 +1,5 @@
+import { matchesMetro } from './metro.mjs';
+
 export const CENTER = [53.915833, 27.583333];
 export const RADIUS_KM = 3;
 export const MAX_USD = 500;
@@ -42,12 +44,12 @@ export function distanceKm(lat1, lon1, lat2, lon2) {
   return 12742 * Math.asin(Math.sqrt(a));
 }
 
-export function matches(item, start, end) {
+export function matches(item, start, end, selected) {
   const time = Date.parse(item.publishedAt);
   return Number.isFinite(time) && time >= Date.parse(start) && time < Date.parse(end) &&
     Number.isFinite(item.usd) && item.usd <= MAX_USD &&
     Number.isFinite(item.latitude) && Number.isFinite(item.longitude) &&
-    distanceKm(item.latitude, item.longitude, ...CENTER) <= RADIUS_KM;
+    matchesMetro(item, selected, distanceKm, CENTER, RADIUS_KM);
 }
 
 export function onliner(data) {
@@ -62,7 +64,7 @@ export function onliner(data) {
           usd: Number(x.price.converted.USD.amount),
           rooms: /^\d+_rooms?$/.test(x.rent_type) ? Number(x.rent_type.split("_")[0]) : null,
           latitude: Number(x.location?.latitude), longitude: Number(x.location?.longitude),
-          publishedAt: x.created_at, photo: x.photo || null,
+        publishedAt: x.created_at, photo: x.photo || null,
         };
       } catch { return null; }
     }).filter(Boolean),
@@ -87,6 +89,7 @@ export function realt(raw) {
         address: x.address || "Минск", byn, usd, rooms: x.rooms || null,
         latitude: Number(x.location?.[1]), longitude: Number(x.location?.[0]),
         publishedAt: x.createdAt, photo: x.images?.[0] || null,
+        metroNames: x.metroStationName ? [x.metroStationName] : [],
       };
     }).filter(Boolean),
     total: Number(props.pagination.totalCount),
@@ -112,6 +115,7 @@ export function kufar(data) {
           rooms: /^\d+$/.test(String(attrs.rooms)) ? Number(attrs.rooms) : null,
           latitude: Number(coords[1]), longitude: Number(coords[0]),
           publishedAt: x.list_time, photo,
+          metroNames: (x.ad_parameters || []).find(p => p.p === 'metro')?.vl || [],
         };
       } catch { return null; }
     }).filter(Boolean),
