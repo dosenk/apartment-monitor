@@ -281,8 +281,7 @@ export default {
             cities: selected.cities.includes(cityIndex) ? selected.cities.filter(x => x !== cityIndex) : [...selected.cities, cityIndex] });
         }
         else if (/^city:\d+:\d:\d+:\d+$/.test(action)) {
-          const [, cityIndex, oblastIndex, rayonIndex, page] = action.split(':').map(Number);
-          screen = `rayon:${oblastIndex}:${rayonIndex}:${page}`;
+          const [, cityIndex, oblastIndex, rayonIndex] = action.split(':').map(Number);
           if (CITIES[cityIndex]) await saveDraft(env, { ...selected, locationChosen: true,
             browseOblast: oblastIndex, browseRayon: rayonIndex,
             cities: selected.cities.includes(cityIndex) ? selected.cities.filter(x => x !== cityIndex) :

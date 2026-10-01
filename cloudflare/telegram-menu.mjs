@@ -50,7 +50,7 @@ export function menu(screen, selected) {
     const pages = Math.max(1, Math.ceil(entries.length / 8));
     const page = Math.min(Number(pageText || 0), pages - 1);
     return {
-      text: `📍 ${OBLASTS[Number(oblastIndex)]} область · ${rayon} район\nОтметьте города, посёлки или агрогородки. ${query ? `Поиск: «${query}». Найдено: ${entries.length}. ` : ''}Страница ${page + 1}/${pages}.`,
+      text: `📍 ${OBLASTS[Number(oblastIndex)]} область · ${rayon} район\nВыберите город, посёлок или агрогородок — затем вернётесь в настройки. ${query ? `Поиск: «${query}». Найдено: ${entries.length}. ` : ''}Страница ${page + 1}/${pages}.`,
       inline_keyboard: [
         ...entries.slice(page * 8, (page + 1) * 8).map(({ row, index }) =>
           [pick(`${selected.cities.includes(index) ? '☑️' : '☐'} ${row[3] === 'г.' ? '🏙' : '🏡'} ${row[0]}${row[3] === 'г.' ? '' : ` (${row[3]})`}`,
@@ -67,7 +67,7 @@ export function menu(screen, selected) {
   }
   if (screen === 'help') return {
     text: 'ℹ️ Как пользоваться\n\n' +
-      '1. Выберите область → район области → населённый пункт. Областной центр и города областного подчинения можно выбрать прямо в списке районов. Можно отметить несколько мест.\n' +
+      '1. Выберите область → район области → населённый пункт. Областной центр и города областного подчинения можно выбрать прямо в списке районов. После выбора места вы вернётесь в настройки. Для добавления ещё одного снова нажмите «Область». Повторное нажатие на отмеченное место убирает его.\n' +
       '2. После выбора Минска появятся станции Realt + Kufar, линии Onliner и районы Минска. Без этих отметок поиск идёт по Минску целиком. Район и метро применяются вместе. Для Бреста доступны районы города.\n' +
       '3. При желании задайте максимальную цену в BYN. Число 0 убирает ограничение.\n' +
       '4. Выберите частоту и нажмите «Применить». Кнопка «Текущие настройки» покажет сохранённые параметры; в меню редактирования показан черновик.\n\n' +
@@ -128,8 +128,6 @@ export function menu(screen, selected) {
   const minsk = selected.locationChosen && isMinskSelected(selected);
   return {
     text: '⚙️ Настройки поиска · черновик\n' +
-      `Область: ${selected.browseOblast === null ? 'не выбрана' : `${OBLASTS[selected.browseOblast]} область`}\n` +
-      `Район области: ${selected.browseRayon === null ? 'не выбран' : `${rayons(OBLASTS[selected.browseOblast])[selected.browseRayon]} район`}\n` +
       `Города: ${selected.cities.map(cityName).join(', ') || 'не выбраны'}\n` +
       (selected.cities.some(i => cityName(i) === 'Брест') ?
         `Районы Бреста: ${selected.cityDistricts.Брест.join(', ') || 'фильтр не задан'}\n` : '') +
@@ -138,11 +136,9 @@ export function menu(screen, selected) {
         `Районы Минска: ${selected.districts.join(', ') || 'фильтр не задан'}\n` : '') +
       `Цена: ${selected.maxByn ? `до ${selected.maxByn} BYN` : 'без ограничения'}\n` +
       `Проверка: ${FREQUENCY_LABELS[selected.frequency]}\n\n` +
-      'Сохраните изменения кнопкой «Применить». Уже отправленные объявления не повторяются.',
+      'Чтобы добавить или убрать город, нажмите «Область» и пройдите выбор местоположения. Сохраните изменения кнопкой «Применить». Уже отправленные объявления не повторяются.',
     inline_keyboard: [
       [pick('📍 Область', 'locations')],
-      [pick('🗺 Район области', 'browse:rayon')],
-      [pick('🏙 Город / населённый пункт', 'browse:city')],
       ...(selected.cities.some(i => cityName(i) === 'Брест') ?
         [[pick('🗺 Районы Бреста', 'city-districts:Brest')]] : []),
       ...(minsk ? [[pick('🚇 Станции Realt + Kufar', 'stations:1')],
