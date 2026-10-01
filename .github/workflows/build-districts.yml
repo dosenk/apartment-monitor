@@ -52,9 +52,22 @@ jobs:
               output[name] = {'osm_id': chosen['osm_id'], 'geometry': chosen['geojson']}
               print(name, chosen['osm_id'], chosen['geojson']['type'])
               time.sleep(1.2)
+          url = 'https://nominatim.openstreetmap.org/search?' + urllib.parse.urlencode({
+              'q': 'Мінск, Беларусь', 'format': 'jsonv2',
+              'polygon_geojson': '1', 'layer': 'address', 'limit': 3})
+          request = urllib.request.Request(url, headers={
+              'User-Agent': 'apartment-monitor/1.0 (https://github.com/dosenk/apartment-monitor)'})
+          with urllib.request.urlopen(request, timeout=30) as response:
+              city_results = json.load(response)
+          city = next((x for x in city_results if x.get('addresstype') == 'city'
+              and x.get('geojson', {}).get('type') in ('Polygon', 'MultiPolygon')), None)
+          if city is None:
+              raise RuntimeError('Minsk city boundary not found')
+          output['Партизанский'] = {'osm_id': None, 'geometry': None}
           Path('cloudflare/districts.json').write_text(
               json.dumps({'source': 'OpenStreetMap contributors (ODbL), via Nominatim',
-                  'districts': output}, ensure_ascii=False, separators=(',', ':')) + '\n')
+                  'city': city['geojson'], 'districts': output},
+                  ensure_ascii=False, separators=(',', ':')) + '\\n')
           PY
       - name: Commit district geometry
         run: |
