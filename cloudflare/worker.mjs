@@ -1,20 +1,12 @@
 import { WorkflowEntrypoint } from 'cloudflare:workers';
 import { BUTTON, interval, label, matches, onliner, realt, kufar, caption, dueScan } from './logic.mjs';
-import { LINES, STATIONS, FREQUENCIES, preferences, toggleStation, toggleOnliner } from './metro.mjs';
+import { STATIONS, preferences, toggleStation, toggleOnliner } from './metro.mjs';
 import { DISTRICTS, CITY_DISTRICTS } from './districts.mjs';
 import { CITIES } from './geography.mjs';
-import { OBLASTS, rayons, cities, cityName, isMinskSelected } from './location.mjs';
+import { OBLASTS, rayons, isMinskSelected } from './location.mjs';
+import { SETTINGS_BUTTON, OLD_SETTINGS_BUTTON, HELP_BUTTON, CURRENT_BUTTON, keyboard, menu, settingsSummary } from './telegram-menu.mjs';
 
 const AGENT = 'ApartmentMonitor/1.0 (personal rental alerts)';
-const SETTINGS_BUTTON = '⚙️ Настройки поиска';
-const OLD_SETTINGS_BUTTON = '⚙️ Настроить метро';
-const HELP_BUTTON = 'ℹ️ Как пользоваться';
-const CURRENT_BUTTON = '📋 Текущие настройки';
-const FREQUENCY_LABELS = { scheduled: '09:00, 14:00, 22:00', '10m': 'каждые 10 минут',
-  '30m': 'каждые 30 минут', '1h': 'каждый час', '4h': 'каждые 4 часа', '8h': 'каждые 8 часов' };
-const keyboard = { keyboard: [[{ text: BUTTON }], [{ text: SETTINGS_BUTTON }, { text: CURRENT_BUTTON }], [{ text: HELP_BUTTON }]],
-  resize_keyboard: true, is_persistent: true };
-
 async function readActive(env) {
   const row = await env.DB.prepare('SELECT settings FROM search_preferences WHERE chat_id=?')
     .bind(env.TELEGRAM_CHAT_ID).first();
@@ -26,166 +18,24 @@ async function readDraft(env) {
     .bind(env.TELEGRAM_CHAT_ID).first();
   if (!row) {
     const selected = (await readActive(env)) || preferences(null);
+    if (!selected.locationChosen) {
+      selected.cities = [];
+      selected.browseOblast = null;
+      selected.browseRayon = null;
+    }
     await env.DB.prepare('INSERT OR IGNORE INTO search_drafts(chat_id,settings,awaiting) VALUES (?,?,NULL)')
       .bind(env.TELEGRAM_CHAT_ID, JSON.stringify(selected)).run();
     row = { settings: JSON.stringify(selected), awaiting: null };
   }
-  return { selected: preferences(JSON.parse(row.settings)), awaiting: row.awaiting };
+  const selected = preferences(JSON.parse(row.settings));
+  if (!selected.locationChosen) selected.cities = [];
+  return { selected, awaiting: row.awaiting === 'radius' ? null : row.awaiting };
 }
 
 async function saveDraft(env, selected, awaiting = null) {
   await env.DB.prepare(`INSERT INTO search_drafts(chat_id,settings,awaiting) VALUES (?,?,?)
     ON CONFLICT(chat_id) DO UPDATE SET settings=excluded.settings, awaiting=excluded.awaiting`)
     .bind(env.TELEGRAM_CHAT_ID, JSON.stringify(preferences(selected)), awaiting).run();
-}
-
-function menu(screen, selected) {
-  const pick = (label, data) => ({ text: label, callback_data: `prefs:${data}` });
-  if (screen === 'locations') return {
-    text: '📍 Местоположение · шаг 1\nСначала выберите область, затем район области и город. ' +
-      'Можно отметить несколько городов в разных районах и областях. Выбранные города ищутся целиком; ' +
-      'районы города задаются отдельно, если доступны. Отметки сохранятся после «Применить».',
-    inline_keyboard: [
-      ...OBLASTS.map((name, index) => [pick(`${name} область`, `oblast:${index}`)]),
-      [pick('⬅️ Настройки', 'home')],
-    ],
-  };
-  if (/^oblast:\d$/.test(screen)) {
-    const index = Number(screen.split(':')[1]);
-    const names = rayons(OBLASTS[index]);
-    return {
-      text: `📍 ${OBLASTS[index]} область\nВыберите район области. Областные центры и города, 'район которых отсутствует в открытом справочнике, находятся в группе «Города без района в справочнике».`,
-      inline_keyboard: [
-        ...names.map((name, i) => [pick(name, `rayon:${index}:${i}`)]),
-        [pick('⬅️ Области', 'locations')],
-      ],
-    };
-  }
-  if (/^rayon:\d:\d+(?::\d+)?$/.test(screen)) {
-    const [, oblastIndex, rayonIndex, pageText] = screen.split(':');
-    const names = rayons(OBLASTS[Number(oblastIndex)]);
-    const rayon = names[Number(rayonIndex)];
-    const entries = cities(OBLASTS[Number(oblastIndex)], rayon);
-    const pages = Math.max(1, Math.ceil(entries.length / 8));
-    const page = Math.min(Number(pageText || 0), pages - 1);
-    return {
-      text: `📍 ${OBLASTS[Number(oblastIndex)]} область · ${rayon}\nОтметьте нужные города. Весь выбранный город включён в поиск. Страница ${page + 1}/${pages}.`,
-      inline_keyboard: [
-        ...entries.slice(page * 8, (page + 1) * 8).map(({ row, index }) =>
-          [pick(`${selected.cities.includes(index) ? '☑️' : '☐'} ${row[0]}`,
-            `city:${index}:${oblastIndex}:${rayonIndex}:${page}`)]),
-        [
-          ...(page ? [pick('◀️', `rayon:${oblastIndex}:${rayonIndex}:${page - 1}`)] : []),
-          ...(page + 1 < pages ? [pick('▶️', `rayon:${oblastIndex}:${rayonIndex}:${page + 1}`)] : []),
-        ].filter(Boolean),
-        [pick('⬅️ Районы области', `oblast:${oblastIndex}`), pick('⚙️ Настройки', 'home')],
-      ].filter(row => row.length),
-    };
-  }
-  if (screen === 'help') return {
-    text: 'ℹ️ Как пользоваться\n\n' +
-      '1. Выберите область → район области → город. Можно отметить несколько городов, каждый выбранный город ищется целиком.\n' +
-      '2. Для Минска доступны районы, метро и радиус; для Бреста — районы города. Пустой список районов не добавляет фильтр. Метро и радиус действуют только на объявления Минска.\n' +
-      '3. При желании задайте максимальную цену в BYN. Число 0 убирает ограничение.\n' +
-      '4. Выберите частоту и нажмите «Применить». Кнопка «Текущие настройки» покажет сохранённые параметры; в меню редактирования показан черновик.\n\n' +
-      '📏 Радиус: для Realt и Kufar — от выбранных станций; достаточно одной. Для Onliner — от ближайшей к квартире станции, если она на выбранной линии. Если метро не выбрано, радиус считается от площади Якуба Коласа. Без радиуса расстояние не ограничено. Исключение: «Возле метро» в Onliner означает до 1 км, если свой радиус не указан.\n\n' +
-      'Уже присланные объявления повторно не отправляются.',
-    inline_keyboard: [[pick('⚙️ К настройкам', 'home')]],
-  };
-  if (screen === 'districts') return {
-    text: '🗺 Районы Минска\nВыберите один или несколько районов. Без выбора фильтр по району не применяется. Если также выбрано метро, квартира должна соответствовать обоим условиям.',
-    inline_keyboard: [
-      ...DISTRICTS.map((name, index) => [pick(`${selected.districts.includes(name) ? '☑️' : '☐'} ${name}`, `district:${index}`)]),
-      [pick('Сбросить районы', 'reset:districts'), pick('⬅️ Настройки', 'home')],
-    ],
-  };
-  if (screen === 'city-districts:Brest') return {
-    text: '🗺 Районы Бреста\nОтметьте нужные районы города. Если ничего не отмечено, фильтр по районам Бреста не применяется.',
-    inline_keyboard: [
-      ...CITY_DISTRICTS.Брест.map((name, index) =>
-        [pick(`${selected.cityDistricts.Брест.includes(name) ? '☑️' : '☐'} ${name}`,
-          `city-district:Brest:${index}`)]),
-      [pick('Сбросить районы', 'reset:city-districts:Brest'), pick('⬅️ Настройки', 'home')],
-    ],
-  };
-  if (screen === 'frequency') return {
-    text: '⏱ Частота проверки\nВремя — минское. Каждый запуск проверяет объявления с момента предыдущей успешной проверки. Каждые 10 минут могут быстро исчерпать бесплатный лимит Cloudflare и вызвать ограничения сайтов.',
-    inline_keyboard: [
-      ...FREQUENCIES.map(id => [pick(`${selected.frequency === id ? '🔘' : '⚪️'} ${FREQUENCY_LABELS[id]}`, `frequency:${id}`)]),
-      [pick('⬅️ Настройки', 'home')],
-    ],
-  };
-  if (screen.startsWith('stations:')) {
-    const line = Number(screen.split(':')[1]);
-    const title = LINES.find(x => x.id === line)?.name || LINES[0].name;
-    const index = LINES.some(x => x.id === line) ? line : 1;
-    const stationButtons = STATIONS.flatMap((station, i) => station[1] === index
-      ? [pick(`${selected.stations.includes(i) ? '☑️' : '☐'} ${station[0]}`, `station:${i}`)] : []);
-    return {
-      text: `🚇 Realt и Kufar · ${title}\nОтметьте станции. Если ни одна не выбрана, метро не ограничивает поиск.`,
-      inline_keyboard: [
-        LINES.map(x => pick(`${index === x.id ? '• ' : ''}${x.id}-я линия`, `stations:${x.id}`)),
-        ...stationButtons.map(button => [button]),
-        [pick('Сбросить станции', 'reset:stations'), pick('⬅️ Настройки', 'home')],
-      ],
-    };
-  }
-  if (screen === 'onliner') {
-    const options = [['near', 'Возле метро'], ...LINES.map(x => [String(x.id), x.name])];
-    return {
-      text: '🚇 Onliner\nВыберите линии или «возле метро». Линия определяется по ближайшей станции. ' +
-        '«Возле метро» означает до 1 км, если вы не задали свой радиус. Без выбора метро не ограничивает поиск.',
-      inline_keyboard: [
-        ...options.map(([id, name]) => [pick(`${selected.onliner.includes(id) ? '☑️' : '☐'} ${name}`, `option:${id}`)]),
-        [pick('Сбросить Onliner', 'reset:onliner'), pick('⬅️ Настройки', 'home')],
-      ],
-    };
-  }
-  const stationNames = selected.stations.map(i => STATIONS[i]?.[0]).filter(Boolean);
-  const onlinerNames = selected.onliner.map(id => id === 'near' ? 'возле метро' : LINES.find(x => String(x.id) === id)?.name).filter(Boolean);
-  const minsk = isMinskSelected(selected);
-  return {
-    text: '⚙️ Настройки поиска · черновик\n' +
-      `Города: ${selected.cities.map(cityName).join(', ') || 'не выбраны'}\n` +
-      (selected.cities.some(i => cityName(i) === 'Брест') ?
-        `Районы Бреста: ${selected.cityDistricts.Брест.join(', ') || 'фильтр не задан'}\n` : '') +
-      (minsk ? `Realt + Kufar, метро: ${stationNames.join(', ') || 'фильтр не задан'}\n` +
-        `Onliner, метро: ${onlinerNames.join(', ') || 'фильтр не задан'}\n` +
-        `Районы Минска: ${selected.districts.join(', ') || 'фильтр не задан'}\n` : '') +
-      `Цена: ${selected.maxByn ? `до ${selected.maxByn} BYN` : 'без ограничения'}\n` +
-      (minsk ? `Радиус: ${selected.radiusKm ? `${selected.radiusKm} км` : 'не задан'}\n` : '') +
-      `Проверка: ${FREQUENCY_LABELS[selected.frequency]}\n\n` +
-      'Сохраните изменения кнопкой «Применить». Уже отправленные объявления не повторяются.',
-    inline_keyboard: [
-      [pick('📍 Область → район → город', 'locations')],
-      ...(selected.cities.some(i => cityName(i) === 'Брест') ?
-        [[pick('🗺 Районы Бреста', 'city-districts:Brest')]] : []),
-      ...(minsk ? [[pick('🚇 Станции Realt + Kufar', 'stations:1')],
-        [pick('🚇 Линии Onliner', 'onliner')], [pick('🗺 Районы Минска', 'districts')]] : []),
-      [pick('💰 Цена, BYN', 'input:price'), ...(minsk ? [pick('📏 Радиус, км', 'input:radius')] : [])],
-      [pick('⏱ Частота проверки', 'frequency')],
-      [pick(HELP_BUTTON, 'help')],
-      [pick('✅ Применить', 'apply'), pick('Отмена', 'cancel')],
-    ],
-  };
-}
-
-function settingsSummary(selected) {
-  if (!selected) return '📋 Текущие настройки\nПоиск ещё не настроен.';
-  const stationNames = selected.stations.map(i => STATIONS[i]?.[0]).filter(Boolean);
-  const onlinerNames = selected.onliner.map(id => id === 'near' ? 'возле метро' :
-    LINES.find(x => String(x.id) === id)?.name).filter(Boolean);
-  const minsk = isMinskSelected(selected);
-  return '📋 Текущие настройки поиска\n' +
-    `Города: ${selected.cities.map(cityName).join(', ')}\n` +
-    (selected.cities.some(i => cityName(i) === 'Брест') ?
-      `Районы Бреста: ${selected.cityDistricts.Брест.join(', ') || 'фильтр не задан'}\n` : '') +
-    (minsk ? `Realt + Kufar, метро: ${stationNames.join(', ') || 'фильтр не задан'}\n` +
-      `Onliner, метро: ${onlinerNames.join(', ') || 'фильтр не задан'}\n` +
-      `Районы Минска: ${selected.districts.join(', ') || 'фильтр не задан'}\n` : '') +
-    `Цена: ${selected.maxByn ? `до ${selected.maxByn} BYN` : 'без ограничения'}\n` +
-    (minsk ? `Радиус: ${selected.radiusKm ? `${selected.radiusKm} км` : 'не задан'}\n` : '') +
-    `Частота: ${FREQUENCY_LABELS[selected.frequency]}`;
 }
 
 async function showMenu(env, screen, messageId) {
@@ -402,12 +252,39 @@ export default {
         let screen = 'home';
         const action = data.slice(6);
         const { selected, awaiting } = await readDraft(env);
-        if (action === 'locations' || /^oblast:\d$/.test(action) ||
-          /^rayon:\d:\d+(?::\d+)?$/.test(action)) screen = action;
+        if (/^(?:station:|stations:|option:|onliner$|district:|districts$|reset:(?:stations|onliner|districts)$)/.test(action) &&
+          (!selected.locationChosen || !isMinskSelected(selected))) {
+          await telegram(env, 'answerCallbackQuery', { callback_query_id: callback.id,
+            text: 'Сначала выберите Минск в списке городов.' });
+          await showMenu(env, 'home', callback.message.message_id);
+          return Response.json({ ok: true });
+        }
+        if (action === 'locations') screen = action;
+        else if (action === 'browse:rayon' || action === 'browse:city') {
+          screen = selected.browseOblast === null ? 'locations' : `oblast:${selected.browseOblast}`;
+          if (action === 'browse:city' && selected.browseRayon !== null)
+            screen = `rayon:${selected.browseOblast}:${selected.browseRayon}:0`;
+        } else if (/^oblast:\d$/.test(action)) {
+          screen = action;
+          const index = Number(action.split(':')[1]);
+          if (OBLASTS[index]) await saveDraft(env, { ...selected, browseOblast: index, browseRayon: null, placeQuery: '' });
+        } else if (/^rayon:\d:\d+(?::\d+)?$/.test(action)) {
+          screen = action;
+          const [, oblastIndex, rayonIndex] = action.split(':').map(Number);
+          if (OBLASTS[oblastIndex] && rayons(OBLASTS[oblastIndex])[rayonIndex])
+            await saveDraft(env, { ...selected, browseOblast: oblastIndex, browseRayon: rayonIndex,
+              placeQuery: selected.browseOblast === oblastIndex && selected.browseRayon === rayonIndex ? selected.placeQuery : '' });
+        } else if (/^capital:\d+:\d$/.test(action)) {
+          const [, cityIndex, oblastIndex] = action.split(':').map(Number);
+          if (CITIES[cityIndex]) await saveDraft(env, { ...selected, locationChosen: true,
+            browseOblast: oblastIndex, browseRayon: null, placeQuery: '',
+            cities: selected.cities.includes(cityIndex) ? selected.cities.filter(x => x !== cityIndex) : [...selected.cities, cityIndex] });
+        }
         else if (/^city:\d+:\d:\d+:\d+$/.test(action)) {
           const [, cityIndex, oblastIndex, rayonIndex, page] = action.split(':').map(Number);
           screen = `rayon:${oblastIndex}:${rayonIndex}:${page}`;
-          if (CITIES[cityIndex]) await saveDraft(env, { ...selected,
+          if (CITIES[cityIndex]) await saveDraft(env, { ...selected, locationChosen: true,
+            browseOblast: oblastIndex, browseRayon: rayonIndex,
             cities: selected.cities.includes(cityIndex) ? selected.cities.filter(x => x !== cityIndex) :
               [...selected.cities, cityIndex] });
         } else if (action === 'city-districts:Brest') screen = action;
@@ -444,19 +321,29 @@ export default {
           const target = action.split(':')[1];
           await saveDraft(env, { ...selected, [target]: [] });
           screen = target === 'stations' ? 'stations:1' : target;
-        } else if (action === 'input:price' || action === 'input:radius') {
-          const field = action.split(':')[1];
-          await saveDraft(env, selected, field);
+        } else if (/^clear-query:\d:\d+$/.test(action)) {
+          const [, oblastIndex, rayonIndex] = action.split(':').map(Number);
+          screen = `rayon:${oblastIndex}:${rayonIndex}:0`;
+          await saveDraft(env, { ...selected, browseOblast: oblastIndex, browseRayon: rayonIndex, placeQuery: '' });
+        } else if (/^input:place:\d:\d+$/.test(action)) {
+          const [, , oblastIndex, rayonIndex] = action.split(':').map(Number);
+          await saveDraft(env, { ...selected, browseOblast: oblastIndex, browseRayon: rayonIndex }, `place:${oblastIndex}:${rayonIndex}`);
           await telegram(env, 'answerCallbackQuery', { callback_query_id: callback.id });
           await telegram(env, 'sendMessage', { chat_id: env.TELEGRAM_CHAT_ID,
-            text: field === 'price' ? 'Введите максимальную цену в BYN. Отправьте 0, чтобы убрать лимит.' :
-              'Введите радиус в километрах. Отправьте 0, чтобы убрать ограничение по радиусу.',
-            reply_markup: { force_reply: true, input_field_placeholder: field === 'price' ? 'Например, 1500' : 'Например, 2,5' } });
+            text: 'Введите название или часть названия населённого пункта.',
+            reply_markup: { force_reply: true, input_field_placeholder: 'Например, Боровляны' } });
+          return Response.json({ ok: true });
+        } else if (action === 'input:price') {
+          await saveDraft(env, selected, 'price');
+          await telegram(env, 'answerCallbackQuery', { callback_query_id: callback.id });
+          await telegram(env, 'sendMessage', { chat_id: env.TELEGRAM_CHAT_ID,
+            text: 'Введите максимальную цену в BYN. Отправьте 0, чтобы убрать лимит.',
+            reply_markup: { force_reply: true, input_field_placeholder: 'Например, 1500' } });
           return Response.json({ ok: true });
         } else if (action === 'apply') {
           if (awaiting) {
             await telegram(env, 'answerCallbackQuery', { callback_query_id: callback.id,
-              text: 'Сначала отправьте число или 0 для сброса.' });
+              text: 'Сначала завершите ввод или откройте настройки, чтобы отменить ввод.' });
             return Response.json({ ok: true });
           }
           if (!selected.cities.length) {
@@ -505,9 +392,27 @@ export default {
       await showMenu(env, 'home');
       return Response.json({ ok: true });
     }
+    if (draft?.awaiting === 'radius') {
+      await saveDraft(env, preferences(JSON.parse(draft.settings)));
+      await showMenu(env, 'home');
+      return Response.json({ ok: true });
+    }
+    if (draft?.awaiting?.startsWith('place:') && !update.message?.text?.startsWith('/')) {
+      const query = update.message?.text?.trim();
+      if (!query || query.length > 80) {
+        await telegram(env, 'sendMessage', { chat_id: env.TELEGRAM_CHAT_ID,
+          text: 'Введите название длиной до 80 символов.', reply_markup: { force_reply: true } });
+        return Response.json({ ok: true });
+      }
+      const [, oblastIndex, rayonIndex] = draft.awaiting.split(':').map(Number);
+      await saveDraft(env, { ...preferences(JSON.parse(draft.settings)),
+        browseOblast: oblastIndex, browseRayon: rayonIndex, placeQuery: query });
+      await showMenu(env, `rayon:${oblastIndex}:${rayonIndex}:0`);
+      return Response.json({ ok: true });
+    }
     if (draft?.awaiting && !update.message?.text?.startsWith('/')) {
       const input = update.message?.text?.trim().replace(',', '.');
-      const limit = draft.awaiting === 'price' ? 100000 : 50;
+      const limit = 100000;
       const numeric = /^\d+(?:\.\d{1,2})?$/.test(input || '') ? Number(input) : NaN;
       if (!Number.isFinite(numeric) || numeric < 0 || numeric > limit) {
         await telegram(env, 'sendMessage', { chat_id: env.TELEGRAM_CHAT_ID,
@@ -516,7 +421,7 @@ export default {
         return Response.json({ ok: true });
       }
       const selected = preferences(JSON.parse(draft.settings));
-      selected[draft.awaiting === 'price' ? 'maxByn' : 'radiusKm'] = numeric || null;
+      selected.maxByn = numeric || null;
       await saveDraft(env, selected);
       await showMenu(env, 'home');
       return Response.json({ ok: true });
