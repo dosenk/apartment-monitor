@@ -7,14 +7,28 @@ const SETTINGS_BUTTON = '⚙️ Настроить метро';
 const keyboard = { keyboard: [[{ text: BUTTON }], [{ text: SETTINGS_BUTTON }]],
   resize_keyboard: true, is_persistent: true };
 
-async function readPreferences(env) {
-  const value = (await env.DB.prepare("SELECT value FROM meta WHERE key='search_preferences'").first())?.value;
-  try { return preferences(JSON.parse(value)); } catch { return preferences(null); }
+async function readActive(env) {
+  const row = await env.DB.prepare('SELECT settings FROM search_preferences WHERE chat_id=?')
+    .bind(env.TELEGRAM_CHAT_ID).first();
+  return row ? preferences(JSON.parse(row.settings)) : null;
 }
 
-async function savePreferences(env, selected) {
-  await env.DB.prepare(`INSERT INTO meta(key,value) VALUES ('search_preferences',?)
-    ON CONFLICT(key) DO UPDATE SET value=excluded.value`).bind(JSON.stringify(selected)).run();
+async function readDraft(env) {
+  let row = await env.DB.prepare('SELECT settings,awaiting FROM search_drafts WHERE chat_id=?')
+    .bind(env.TELEGRAM_CHAT_ID).first();
+  if (!row) {
+    const selected = (await readActive(env)) || preferences(null);
+    await env.DB.prepare('INSERT OR IGNORE INTO search_drafts(chat_id,settings,awaiting) VALUES (?,?,NULL)')
+      .bind(env.TELEGRAM_CHAT_ID, JSON.stringify(selected)).run();
+    row = { settings: JSON.stringify(selected), awaiting: null };
+  }
+  return { selected: preferences(JSON.parse(row.settings)), awaiting: row.awaiting };
+}
+
+async function saveDraft(env, selected, awaiting = null) {
+  await env.DB.prepare(`INSERT INTO search_drafts(chat_id,settings,awaiting) VALUES (?,?,?)
+    ON CONFLICT(chat_id) DO UPDATE SET settings=excluded.settings, awaiting=excluded.awaiting`)
+    .bind(env.TELEGRAM_CHAT_ID, JSON.stringify(preferences(selected)), awaiting).run();
 }
 
 function menu(screen, selected) {
@@ -26,8 +40,7 @@ function menu(screen, selected) {
     const stationButtons = STATIONS.flatMap((station, i) => station[1] === index
       ? [pick(`${selected.stations.includes(i) ? '☑️' : '☐'} ${station[0]}`, `station:${i}`)] : []);
     return {
-      text: `🚇 Realt и Kufar · ${title}\nОтметьте станции. Радиус — 3 км от выбранной станции.\n` +
-        `Если станций нет, действует прежний район Якуба Коласа (3 км).`,
+      text: `🚇 Realt и Kufar · ${title}\nОтметьте станции. Если ни одна не выбрана, метро не ограничивает поиск.`,
       inline_keyboard: [
         LINES.map(x => pick(`${index === x.id ? '• ' : ''}${x.id}-я линия`, `stations:${x.id}`)),
         ...stationButtons.map(button => [button]),
@@ -36,10 +49,10 @@ function menu(screen, selected) {
     };
   }
   if (screen === 'onliner') {
-    const options = [['near', 'Возле метро (до 3 км)'], ...LINES.map(x => [String(x.id), x.name])];
+    const options = [['near', 'Возле метро'], ...LINES.map(x => [String(x.id), x.name])];
     return {
-      text: '🚇 Onliner\nВыберите линии или все станции. Поиск использует координаты квартир и радиус 3 км.\n' +
-        'Если ничего не выбрано, действует прежний район Якуба Коласа (3 км).',
+      text: '🚇 Onliner\nВыберите линии или «возле метро». Линия определяется по ближайшей станции. ' +
+        '«Возле метро» означает до 1 км, если вы не задали свой радиус. Без выбора метро не ограничивает поиск.',
       inline_keyboard: [
         ...options.map(([id, name]) => [pick(`${selected.onliner.includes(id) ? '☑️' : '☐'} ${name}`, `option:${id}`)]),
         [pick('Сбросить Onliner', 'reset:onliner'), pick('⬅️ Настройки', 'home')],
@@ -49,20 +62,24 @@ function menu(screen, selected) {
   const stationNames = selected.stations.map(i => STATIONS[i]?.[0]).filter(Boolean);
   const onlinerNames = selected.onliner.map(id => id === 'near' ? 'возле метро' : LINES.find(x => String(x.id) === id)?.name).filter(Boolean);
   return {
-    text: '⚙️ Настройки метро\n' +
-      `Realt + Kufar: ${stationNames.length ? stationNames.join(', ') : 'район Якуба Коласа (3 км)'}\n` +
-      `Onliner: ${onlinerNames.length ? onlinerNames.join(', ') : 'район Якуба Коласа (3 км)'}\n\n` +
-      'Цена до $500. Изменения действуют с новой проверки; уже отправленные объявления не повторяются.',
+    text: '⚙️ Настройки поиска · черновик\n' +
+      `Realt + Kufar: ${stationNames.length ? stationNames.join(', ') : 'любое метро'}\n` +
+      `Onliner: ${onlinerNames.length ? onlinerNames.join(', ') : 'любая линия'}\n` +
+      `Цена: ${selected.maxByn ? `до ${selected.maxByn} BYN` : 'без ограничения'}\n` +
+      `Радиус: ${selected.radiusKm ? `${selected.radiusKm} км` : 'не задан'}\n\n` +
+      'Радиус считается от выбранных станций; без выбора метро — от Якуба Коласа. ' +
+      'Сохраните изменения кнопкой «Применить». Уже отправленные объявления не повторяются.',
     inline_keyboard: [
       [pick('🚇 Станции Realt + Kufar', 'stations:1')],
       [pick('🚇 Линии Onliner', 'onliner')],
-      [pick('Готово', 'close')],
+      [pick('💰 Цена, BYN', 'input:price'), pick('📏 Радиус, км', 'input:radius')],
+      [pick('✅ Применить', 'apply'), pick('Отмена', 'cancel')],
     ],
   };
 }
 
 async function showMenu(env, screen, messageId) {
-  const selected = await readPreferences(env);
+  const { selected } = await readDraft(env);
   const view = menu(screen, selected);
   const payload = { chat_id: env.TELEGRAM_CHAT_ID, text: view.text,
     reply_markup: { inline_keyboard: view.inline_keyboard } };
@@ -127,11 +144,12 @@ export class ApartmentScan extends WorkflowEntrypoint {
           await step.sleep(`wait-${attempt}`, '20 seconds');
         }
         if (!locked) throw Error('Scan lock held too long');
+        const selected = await step.do('read-settings', () => readActive(env));
+        if (!selected) return { skipped: true, reason: 'search_not_configured' };
         const cursor = await step.do('read-cursor', async () =>
           (await env.DB.prepare("SELECT value FROM meta WHERE key='covered_until'").first())?.value || null);
         const bounds = interval(kind, event.payload?.requestedAt || event.schedule?.scheduledTime || Date.now(), cursor);
         if (bounds.start >= bounds.end) return { skipped: true, bounds };
-        const selected = await step.do('read-settings', () => readPreferences(env));
         await step.do('init-run', () => env.DB.batch([
           env.DB.prepare(`INSERT OR IGNORE INTO scan_runs
             (id,start,end,stage,page,cursor,header_sent) VALUES (?,?,?,'onliner',1,NULL,0)`)
@@ -252,6 +270,11 @@ export default {
       const callback = update.callback_query;
       const data = callback.data || '';
       if (data === 'check_updates') {
+        if (!(await readActive(env))) {
+          await telegram(env, 'answerCallbackQuery', { callback_query_id: callback.id,
+            text: 'Сначала сохраните настройки поиска.', show_alert: true });
+          return Response.json({ ok: true });
+        }
         const instance = await env.SCAN.create({ params: { kind: 'check', requestedAt: Date.now() } });
         await telegram(env, 'answerCallbackQuery', { callback_query_id: callback.id, text: 'Проверяю новые квартиры…' });
         return Response.json({ ok: true, id: instance.id });
@@ -259,24 +282,52 @@ export default {
       if (data.startsWith('prefs:')) {
         let screen = 'home';
         const action = data.slice(6);
-        const selected = await readPreferences(env);
+        const { selected, awaiting } = await readDraft(env);
         if (/^station:\d+$/.test(action)) {
           const index = Number(action.split(':')[1]);
           screen = `stations:${STATIONS[index]?.[1] || 1}`;
-          if (STATIONS[index]) await savePreferences(env, toggleStation(selected, index));
+          if (STATIONS[index]) await saveDraft(env, toggleStation(selected, index));
         } else if (/^stations:[123]$/.test(action)) screen = action;
         else if (/^option:(near|[123])$/.test(action)) {
           screen = 'onliner';
-          await savePreferences(env, toggleOnliner(selected, action.split(':')[1]));
+          await saveDraft(env, toggleOnliner(selected, action.split(':')[1]));
         } else if (action === 'onliner') screen = 'onliner';
         else if (action === 'reset:stations' || action === 'reset:onliner') {
           const target = action.split(':')[1];
-          await savePreferences(env, { ...selected, [target]: [] });
+          await saveDraft(env, { ...selected, [target]: [] });
           screen = target === 'stations' ? 'stations:1' : 'onliner';
-        } else if (action === 'close') {
+        } else if (action === 'input:price' || action === 'input:radius') {
+          const field = action.split(':')[1];
+          await saveDraft(env, selected, field);
+          await telegram(env, 'answerCallbackQuery', { callback_query_id: callback.id });
+          await telegram(env, 'sendMessage', { chat_id: env.TELEGRAM_CHAT_ID,
+            text: field === 'price' ? 'Введите максимальную цену в BYN. Отправьте 0, чтобы убрать лимит.' :
+              'Введите радиус в километрах. Отправьте 0, чтобы убрать ограничение по радиусу.',
+            reply_markup: { force_reply: true, input_field_placeholder: field === 'price' ? 'Например, 1500' : 'Например, 2,5' } });
+          return Response.json({ ok: true });
+        } else if (action === 'apply') {
+          if (awaiting) {
+            await telegram(env, 'answerCallbackQuery', { callback_query_id: callback.id,
+              text: 'Сначала отправьте число или 0 для сброса.' });
+            return Response.json({ ok: true });
+          }
+          await env.DB.batch([
+            env.DB.prepare(`INSERT INTO search_preferences(chat_id,settings) VALUES (?,?)
+              ON CONFLICT(chat_id) DO UPDATE SET settings=excluded.settings`)
+              .bind(env.TELEGRAM_CHAT_ID, JSON.stringify(selected)),
+            env.DB.prepare('DELETE FROM search_drafts WHERE chat_id=?').bind(env.TELEGRAM_CHAT_ID),
+          ]);
+          await telegram(env, 'answerCallbackQuery', { callback_query_id: callback.id, text: 'Настройки применены' });
+          await telegram(env, 'editMessageText', { chat_id: env.TELEGRAM_CHAT_ID,
+            message_id: callback.message.message_id, text: '✅ Настройки применены. Следующая проверка использует сохранённый выбор.' });
+          await telegram(env, 'sendMessage', { chat_id: env.TELEGRAM_CHAT_ID,
+            text: 'Можете проверить новые объявления сейчас или изменить настройки позже.', reply_markup: keyboard });
+          return Response.json({ ok: true });
+        } else if (action === 'cancel') {
+          await env.DB.prepare('DELETE FROM search_drafts WHERE chat_id=?').bind(env.TELEGRAM_CHAT_ID).run();
           await telegram(env, 'answerCallbackQuery', { callback_query_id: callback.id });
           await telegram(env, 'editMessageText', { chat_id: env.TELEGRAM_CHAT_ID,
-            message_id: callback.message.message_id, text: 'Настройки метро сохранены.' });
+            message_id: callback.message.message_id, text: 'Изменения отменены.' });
           return Response.json({ ok: true });
         }
         await telegram(env, 'answerCallbackQuery', { callback_query_id: callback.id });
@@ -285,12 +336,43 @@ export default {
       }
     }
     if (String(update.message?.chat?.id) !== env.TELEGRAM_CHAT_ID) return Response.json({ ok: true });
+    const draft = await env.DB.prepare('SELECT settings,awaiting FROM search_drafts WHERE chat_id=?')
+      .bind(env.TELEGRAM_CHAT_ID).first();
+    if (draft?.awaiting && (update.message?.text === SETTINGS_BUTTON || update.message?.text === '/cancel')) {
+      await saveDraft(env, preferences(JSON.parse(draft.settings)));
+      await showMenu(env, 'home');
+      return Response.json({ ok: true });
+    }
+    if (draft?.awaiting && !update.message?.text?.startsWith('/')) {
+      const input = update.message?.text?.trim().replace(',', '.');
+      const limit = draft.awaiting === 'price' ? 100000 : 50;
+      const numeric = /^\d+(?:\.\d{1,2})?$/.test(input || '') ? Number(input) : NaN;
+      if (!Number.isFinite(numeric) || numeric < 0 || numeric > limit) {
+        await telegram(env, 'sendMessage', { chat_id: env.TELEGRAM_CHAT_ID,
+          text: `Введите число от 0 до ${limit}. Ноль убирает ограничение.`,
+          reply_markup: { force_reply: true } });
+        return Response.json({ ok: true });
+      }
+      const selected = preferences(JSON.parse(draft.settings));
+      selected[draft.awaiting === 'price' ? 'maxByn' : 'radiusKm'] = numeric || null;
+      await saveDraft(env, selected);
+      await showMenu(env, 'home');
+      return Response.json({ ok: true });
+    }
     if (update.message?.text?.startsWith('/start')) {
+      const active = await readActive(env);
       await telegram(env, 'sendMessage', { chat_id: env.TELEGRAM_CHAT_ID,
-        text: 'Внизу чата доступны проверка квартир и настройка метро.',
+        text: active ? 'Внизу чата доступны проверка квартир и настройка поиска.' :
+          'Задайте параметры поиска и нажмите «Применить». После этого заработают проверки по кнопке и расписанию.',
         reply_markup: keyboard });
       await showMenu(env, 'home');
     } else if (update.message?.text === BUTTON) {
+      if (!(await readActive(env))) {
+        await telegram(env, 'sendMessage', { chat_id: env.TELEGRAM_CHAT_ID,
+          text: 'Сначала настройте поиск и нажмите «Применить».', reply_markup: keyboard });
+        await showMenu(env, 'home');
+        return Response.json({ ok: true });
+      }
       const instance = await env.SCAN.create({ params: { kind: 'check', requestedAt: Date.now() } });
       await telegram(env, 'sendMessage', { chat_id: env.TELEGRAM_CHAT_ID,
         text: 'Проверяю новые квартиры…', reply_markup: keyboard });
