@@ -25,10 +25,17 @@ jobs:
 
           names = ['Центральный', 'Советский', 'Первомайский', 'Партизанский',
                    'Заводской', 'Ленинский', 'Октябрьский', 'Московский', 'Фрунзенский']
+          aliases = {
+              'Центральный': 'Цэнтральны', 'Советский': 'Савецкі',
+              'Первомайский': 'Першамайскі', 'Партизанский': 'Партызанскі',
+              'Заводской': 'Заводскі', 'Ленинский': 'Ленінскі',
+              'Октябрьский': 'Кастрычніцкі', 'Московский': 'Маскоўскі',
+              'Фрунзенский': 'Фрунзенскі',
+          }
           output = {}
           for name in names:
               url = 'https://nominatim.openstreetmap.org/search?' + urllib.parse.urlencode({
-                  'q': f'{name} район, Минск, Беларусь', 'format': 'jsonv2',
+                  'q': f'{aliases[name]} раён, Мінск, Беларусь', 'format': 'jsonv2',
                   'polygon_geojson': '1', 'limit': 3})
               request = urllib.request.Request(url, headers={
                   'User-Agent': 'apartment-monitor/1.0 (https://github.com/dosenk/apartment-monitor)'})
