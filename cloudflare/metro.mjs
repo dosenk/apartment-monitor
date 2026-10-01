@@ -46,16 +46,20 @@ export const STATIONS = [
 ];
 
 import { DISTRICTS } from './districts.mjs';
+import { CITIES } from './geography.mjs';
+import { DEFAULT_CITY } from './location.mjs';
 
 export const FREQUENCIES = ['scheduled', '10m', '30m', '1h', '4h', '8h'];
-export const DEFAULT_PREFERENCES = Object.freeze({ stations: [], onliner: [], districts: [],
+export const DEFAULT_PREFERENCES = Object.freeze({ cities: [DEFAULT_CITY], stations: [], onliner: [], districts: [],
   maxByn: null, radiusKm: null, frequency: 'scheduled' });
 
 export function preferences(value) {
   const stations = Array.isArray(value?.stations) ? value.stations : [];
   const onliner = Array.isArray(value?.onliner) ? value.onliner : [];
   const districts = Array.isArray(value?.districts) ? value.districts : [];
+  const cities = Array.isArray(value?.cities) ? value.cities : [DEFAULT_CITY];
   return {
+    cities: [...new Set(cities.filter(x => Number.isInteger(x) && x >= 0 && x < CITIES.length))],
     stations: [...new Set(stations.filter(x => Number.isInteger(x) && x >= 0 && x < STATIONS.length))],
     onliner: [...new Set(onliner.filter(x => ['near', '1', '2', '3'].includes(x)))],
     districts: [...new Set(districts.filter(x => DISTRICTS.includes(x)))],
