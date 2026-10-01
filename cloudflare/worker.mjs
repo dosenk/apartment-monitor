@@ -225,7 +225,7 @@ export default {
     const url = new URL(request.url);
     if (url.pathname === '/health' && request.method === 'GET') return Response.json({ ok: true });
     if (url.pathname !== '/telegram' || request.method !== 'POST') return new Response('Not found', { status: 404 });
-    if (request.headers.get('X-Telegram-Bot-Api-Secret-Token') !== env.WEBHOOK_SECRET) return new Response('Forbidden', { status: 403 });
+    if (request.headers.get('X-Telegram-Bot-Api-Secret-Token') !== env.WEBHOOK_SECRET?.trim()) return new Response('Forbidden', { status: 403 });
     try {
     const update = await request.json();
     if (String(update.callback_query?.message?.chat?.id) === env.TELEGRAM_CHAT_ID) {
