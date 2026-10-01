@@ -15,19 +15,27 @@ test('scheduled windows and a manual check share one advancing cursor', () => {
 
 test('station selection is shared by Realt and Kufar while Onliner lines are independent', () => {
   const start = '2026-10-01T06:00:00Z', end = '2026-10-01T09:00:00Z';
-  const base = { publishedAt: '2026-10-01T07:00:00Z', usd: 450, latitude: 53.92176,
+  const base = { publishedAt: '2026-10-01T07:00:00Z', usd: 450, byn: 1400, latitude: 53.92176,
     longitude: 27.59934, metroNames: ['Академия наук'] };
   const index = STATIONS.findIndex(x => x[0] === 'Академия наук');
   let selected = toggleStation(preferences(null), index);
   assert.ok(matches({ ...base, key: 'realt:1' }, start, end, selected));
   assert.ok(matches({ ...base, key: 'kufar:1' }, start, end, selected));
   assert.ok(!matches({ ...base, key: 'realt:1', metroNames: ['Каменная горка'] }, start, end, selected));
-  assert.ok(!matches({ ...base, key: 'kufar:1', latitude: 53.84992, longitude: 27.47481 }, start, end, selected));
+  assert.ok(matches({ ...base, key: 'kufar:1', latitude: 53.84992, longitude: 27.47481 }, start, end, selected));
+  assert.ok(!matches({ ...base, key: 'kufar:1', latitude: 53.84992, longitude: 27.47481 }, start, end,
+    { ...selected, radiusKm: 3 }));
   selected = toggleOnliner(selected, '2');
   assert.ok(!matches({ ...base, key: 'onliner:1' }, start, end, selected));
   assert.ok(matches({ ...base, key: 'onliner:1', latitude: 53.90623, longitude: 27.45398 }, start, end, selected));
   assert.deepEqual(toggleOnliner(selected, 'near').onliner, ['near']);
   assert.deepEqual(toggleStation(selected, index).stations, []);
+  assert.ok(!matches({ ...base, key: 'realt:1' }, start, end, { ...selected, maxByn: 1200 }));
+  assert.ok(matches({ ...base, key: 'realt:1' }, start, end, { ...selected, maxByn: null }));
+  assert.ok(matches({ ...base, key: 'realt:1', latitude: NaN, longitude: NaN }, start, end,
+    { stations: [], onliner: [], maxByn: null, radiusKm: null }));
+  assert.ok(!matches({ ...base, key: 'realt:1', latitude: NaN, longitude: NaN }, start, end,
+    { stations: [], onliner: [], maxByn: null, radiusKm: 2 }));
 });
 
 test('three sources preserve direct links, first photo, USD price, and location', () => {
