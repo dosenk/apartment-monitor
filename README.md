@@ -3,7 +3,7 @@
 ## Telegram bot on Cloudflare
 
 The active bot is a Cloudflare Worker with a D1 database and Telegram webhook. Open
-**⚙️ Настройки поиска → 📍 Область → район → город** to select one or more places in Belarus,
+**⚙️ Настройки поиска → 📍 Область → район → город** to select one or more places in Belarus. The settings root has only one location button; choosing a city returns to settings. Open **📍 Область** again to add or remove another city,
 then set an optional BYN price limit and check frequency. Minsk listings can additionally
 be filtered by metro station or line and Minsk city district. These controls appear
 only after an explicit Minsk selection. Radius is disabled, including previously saved
