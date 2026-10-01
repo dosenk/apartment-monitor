@@ -1,11 +1,14 @@
 import { WorkflowEntrypoint } from 'cloudflare:workers';
-import { BUTTON, interval, label, matches, onliner, realt, kufar, caption } from './logic.mjs';
-import { LINES, STATIONS, preferences, toggleStation, toggleOnliner } from './metro.mjs';
+import { BUTTON, interval, label, matches, onliner, realt, kufar, caption, dueScan } from './logic.mjs';
+import { LINES, STATIONS, FREQUENCIES, preferences, toggleStation, toggleOnliner } from './metro.mjs';
+import { DISTRICTS } from './districts.mjs';
 
 const AGENT = 'ApartmentMonitor/1.0 (personal rental alerts)';
 const SETTINGS_BUTTON = '⚙️ Настройки поиска';
 const OLD_SETTINGS_BUTTON = '⚙️ Настроить метро';
 const HELP_BUTTON = 'ℹ️ Как пользоваться';
+const FREQUENCY_LABELS = { scheduled: '09:00, 14:00, 22:00', '10m': 'каждые 10 минут',
+  '30m': 'каждые 30 минут', '1h': 'каждый час', '4h': 'каждые 4 часа', '8h': 'каждые 8 часов' };
 const keyboard = { keyboard: [[{ text: BUTTON }], [{ text: SETTINGS_BUTTON }], [{ text: HELP_BUTTON }]],
   resize_keyboard: true, is_persistent: true };
 
@@ -37,12 +40,26 @@ function menu(screen, selected) {
   const pick = (label, data) => ({ text: label, callback_data: `prefs:${data}` });
   if (screen === 'help') return {
     text: 'ℹ️ Как пользоваться\n\n' +
-      '1. В «Настройках поиска» отметьте станции для Realt и Kufar и линии для Onliner. Можно выбрать несколько.\n' +
+      '1. Отметьте станции для Realt и Kufar, линии для Onliner и районы Минска. Можно выбрать несколько; метро и район действуют вместе.\n' +
       '2. При желании задайте максимальную цену в BYN и радиус в км. Число 0 убирает ограничение.\n' +
-      '3. Нажмите «Применить». После этого новые объявления придут по расписанию или по кнопке «Проверить новые квартиры». Настройки можно изменить позже.\n\n' +
+      '3. Выберите частоту и нажмите «Применить». Новые объявления придут по расписанию или по кнопке «Проверить новые квартиры». Настройки можно изменить позже.\n\n' +
       '📏 Радиус: для Realt и Kufar — от выбранных станций; достаточно одной. Для Onliner — от ближайшей к квартире станции, если она на выбранной линии. Если метро не выбрано, радиус считается от площади Якуба Коласа. Без радиуса расстояние не ограничено. Исключение: «Возле метро» в Onliner означает до 1 км, если свой радиус не указан.\n\n' +
       'Уже присланные объявления повторно не отправляются.',
     inline_keyboard: [[pick('⚙️ К настройкам', 'home')]],
+  };
+  if (screen === 'districts') return {
+    text: '🗺 Районы Минска\nВыберите один или несколько районов. Без выбора район не ограничивает поиск. Если также выбрано метро, квартира должна соответствовать обоим условиям.',
+    inline_keyboard: [
+      ...DISTRICTS.map((name, index) => [pick(`${selected.districts.includes(name) ? '☑️' : '☐'} ${name}`, `district:${index}`)]),
+      [pick('Сбросить районы', 'reset:districts'), pick('⬅️ Настройки', 'home')],
+    ],
+  };
+  if (screen === 'frequency') return {
+    text: '⏱ Частота проверки\nВремя — минское. Каждый запуск проверяет объявления с момента предыдущей успешной проверки. Каждые 10 минут могут быстро исчерпать бесплатный лимит Cloudflare и вызвать ограничения сайтов.',
+    inline_keyboard: [
+      ...FREQUENCIES.map(id => [pick(`${selected.frequency === id ? '🔘' : '⚪️'} ${FREQUENCY_LABELS[id]}`, `frequency:${id}`)]),
+      [pick('⬅️ Настройки', 'home')],
+    ],
   };
   if (screen.startsWith('stations:')) {
     const line = Number(screen.split(':')[1]);
@@ -76,14 +93,18 @@ function menu(screen, selected) {
     text: '⚙️ Настройки поиска · черновик\n' +
       `Realt + Kufar: ${stationNames.length ? stationNames.join(', ') : 'любое метро'}\n` +
       `Onliner: ${onlinerNames.length ? onlinerNames.join(', ') : 'любая линия'}\n` +
+      `Районы: ${selected.districts.length ? selected.districts.join(', ') : 'все районы'}\n` +
       `Цена: ${selected.maxByn ? `до ${selected.maxByn} BYN` : 'без ограничения'}\n` +
-      `Радиус: ${selected.radiusKm ? `${selected.radiusKm} км` : 'не задан'}\n\n` +
+      `Радиус: ${selected.radiusKm ? `${selected.radiusKm} км` : 'не задан'}\n` +
+      `Проверка: ${FREQUENCY_LABELS[selected.frequency]}\n\n` +
       'Радиус считается от выбранных станций; без выбора метро — от Якуба Коласа. ' +
       'Сохраните изменения кнопкой «Применить». Уже отправленные объявления не повторяются.',
     inline_keyboard: [
       [pick('🚇 Станции Realt + Kufar', 'stations:1')],
       [pick('🚇 Линии Onliner', 'onliner')],
+      [pick('🗺 Районы Минска', 'districts')],
       [pick('💰 Цена, BYN', 'input:price'), pick('📏 Радиус, км', 'input:radius')],
+      [pick('⏱ Частота проверки', 'frequency')],
       [pick(HELP_BUTTON, 'help')],
       [pick('✅ Применить', 'apply'), pick('Отмена', 'cancel')],
     ],
@@ -268,9 +289,16 @@ export class ApartmentScan extends WorkflowEntrypoint {
 }
 export default {
   async scheduled(controller, env, ctx) {
-    const kind = { '0 6 * * *': 'morning', '0 11 * * *': 'midday', '0 19 * * *': 'evening' }[controller.cron];
-    if (!kind) throw Error(`Unexpected Cron Trigger: ${controller.cron}`);
-    ctx.waitUntil(env.SCAN.create({ params: { kind, requestedAt: controller.scheduledTime } }));
+    if (controller.cron !== '*/10 * * * *') throw Error(`Unexpected Cron Trigger: ${controller.cron}`);
+    ctx.waitUntil((async () => {
+      const selected = await readActive(env);
+      if (!selected) return;
+      const kind = dueScan(selected.frequency, controller.scheduledTime);
+      if (!kind) return;
+      const lock = await env.DB.prepare("SELECT expires FROM locks WHERE name='scan'").first();
+      if (lock && lock.expires > Date.now()) return;
+      await env.SCAN.create({ params: { kind, requestedAt: controller.scheduledTime } });
+    })());
   },
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -305,11 +333,21 @@ export default {
           screen = 'onliner';
           await saveDraft(env, toggleOnliner(selected, action.split(':')[1]));
         } else if (action === 'onliner') screen = 'onliner';
+        else if (action === 'districts' || action === 'frequency') screen = action;
+        else if (/^district:\d+$/.test(action)) {
+          screen = 'districts';
+          const name = DISTRICTS[Number(action.split(':')[1])];
+          if (name) await saveDraft(env, { ...selected, districts: selected.districts.includes(name)
+            ? selected.districts.filter(x => x !== name) : [...selected.districts, name] });
+        } else if (/^frequency:(scheduled|10m|30m|1h|4h|8h)$/.test(action)) {
+          screen = 'frequency';
+          await saveDraft(env, { ...selected, frequency: action.slice(10) });
+        }
         else if (action === 'help') screen = 'help';
-        else if (action === 'reset:stations' || action === 'reset:onliner') {
+        else if (['reset:stations', 'reset:onliner', 'reset:districts'].includes(action)) {
           const target = action.split(':')[1];
           await saveDraft(env, { ...selected, [target]: [] });
-          screen = target === 'stations' ? 'stations:1' : 'onliner';
+          screen = target === 'stations' ? 'stations:1' : target;
         } else if (action === 'input:price' || action === 'input:radius') {
           const field = action.split(':')[1];
           await saveDraft(env, selected, field);
