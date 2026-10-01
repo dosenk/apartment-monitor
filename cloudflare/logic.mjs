@@ -1,4 +1,5 @@
 import { matchesMetro } from './metro.mjs';
+import { matchesDistrict } from './districts.mjs';
 
 export const CENTER = [53.915833, 27.583333];
 export const BUTTON = "🔄 Проверить новые квартиры";
@@ -47,7 +48,15 @@ export function matches(item, start, end, selected) {
   const maxByn = preferencesPrice(selected);
   return Number.isFinite(time) && time >= Date.parse(start) && time < Date.parse(end) &&
     (maxByn === null || (Number.isFinite(item.byn) && item.byn <= maxByn)) &&
-    matchesMetro(item, selected, distanceKm, CENTER);
+    matchesMetro(item, selected, distanceKm, CENTER) && matchesDistrict(item, selected);
+}
+
+export function dueScan(frequency, timestamp) {
+  const mins = { '10m': 10, '30m': 30, '1h': 60, '4h': 240, '8h': 480 }[frequency];
+  const minsk = new Date(timestamp + MINSK_OFFSET);
+  const hour = minsk.getUTCHours(), minute = minsk.getUTCMinutes();
+  if (!mins) return minute === 0 ? ({ 9: 'morning', 14: 'midday', 22: 'evening' }[hour] || null) : null;
+  return (hour * 60 + minute) % mins === 0 ? 'check' : null;
 }
 
 function preferencesPrice(selected) {
