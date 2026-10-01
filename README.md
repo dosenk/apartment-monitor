@@ -1,6 +1,6 @@
 # Apartment monitor
 
-Checks Onlíner, Realt and Kufar for newly published long-term rental apartments in Minsk and sends matches to a private Telegram chat. The configured search covers a **3 km straight-line radius around Ploshcha Yakuba Kolasa metro station** and listings at **$500 USD per month or less**, with any room count. These coordinates are an approximate station center, not the verified location of the Rassvetay studio. Listing feeds provide USD conversions; the monitor does not rely on a hard-coded exchange rate. It remembers sent listing IDs.
+Checks Onlíner, Realt and Kufar for newly published long-term rental apartments in Minsk. Search preferences are saved from the bot's Telegram menu for the configured chat ID. No price or radius is preset; sent listing IDs are remembered in Cloudflare D1.
 
 Only listings with publication timestamps in the selected half-open Minsk-time interval are sent:
 
