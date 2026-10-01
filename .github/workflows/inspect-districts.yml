@@ -52,6 +52,27 @@ jobs:
               except Exception as error:
                   print(name, type(error).__name__, str(error)[:150])
           PY
+      - name: Inspect Minsk district relations
+        run: |
+          python - <<'PY'
+          import json
+          import urllib.parse
+          import urllib.request
+          query = '[out:json][timeout:30];relation(53.8,27.35,54.0,27.75)["boundary"="administrative"]["admin_level"="6"];out tags center;'
+          for host in ['https://overpass.kumi.systems/api/interpreter',
+                       'https://overpass-api.de/api/interpreter']:
+              try:
+                  request = urllib.request.Request(host,
+                      data=urllib.parse.urlencode({'data': query}).encode(),
+                      headers={'User-Agent': 'apartment-monitor/1.0 (district research)'})
+                  with urllib.request.urlopen(request, timeout=60) as response:
+                      result = json.load(response)
+                  print(host, [(e['id'], e.get('tags', {}).get('name:ru'), e.get('tags', {}).get('name'),
+                               e.get('center')) for e in result['elements']])
+                  break
+              except Exception as error:
+                  print(host, type(error).__name__, str(error)[:150])
+          PY
       - name: Inspect OSM administrative boundaries
         run: |
           python - <<'PY'
