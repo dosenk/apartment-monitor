@@ -1,4 +1,4 @@
-name: Check Telegram search menu
+name: Deliver Telegram search menu
 
 on:
   push:
@@ -9,53 +9,44 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  deliver:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     env:
-      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
     steps:
-      - name: Wait for menu deployment and request /start
+      - name: Send search keyboard to the configured chat
         run: |
           python - <<'PY'
-          import hashlib
           import json
           import os
-          import time
           import urllib.request
 
-          account = os.environ['CLOUDFLARE_ACCOUNT_ID']
-          token = os.environ['CLOUDFLARE_API_TOKEN']
-          request = urllib.request.Request(
-              f'https://api.cloudflare.com/client/v4/accounts/{account}/workers/subdomain',
-              headers={'Authorization': f'Bearer {token}'})
-          with urllib.request.urlopen(request, timeout=30) as response:
-              domain = json.load(response)['result']['subdomain']
-          url = f'https://apartment-monitor-bot.{domain}.workers.dev'
           bot = os.environ['TELEGRAM_BOT_TOKEN']
-          chat_id = int(os.environ['TELEGRAM_CHAT_ID'])
-          payload = {'update_id': int(time.time()), 'message': {
-              'message_id': int(time.time()), 'date': int(time.time()),
-              'chat': {'id': chat_id, 'type': 'private'},
-              'from': {'id': chat_id, 'is_bot': False, 'first_name': 'Owner'},
-              'text': '/start'}}
-          for attempt in range(4):
-              request = urllib.request.Request(url + '/telegram',
-                  data=json.dumps(payload).encode(),
-                  headers={'Content-Type': 'application/json',
-                           'X-Telegram-Bot-Api-Secret-Token': hashlib.sha256(bot.encode()).hexdigest()})
-              try:
-                  with urllib.request.urlopen(request, timeout=30) as response:
-                      result = json.load(response)
-                  assert result['ok'], result
-                  print('Telegram /start handled; menu and keyboard sent to configured chat')
-                  break
-              except Exception as error:
-                  if attempt == 3:
-                      raise
-                  print(f'Waiting for deployed menu: attempt {attempt + 1}, {type(error).__name__}: {getattr(error, "read", lambda: b"")().decode()[:500]}', flush=True)
-                  time.sleep(10)
+          chat_id = os.environ['TELEGRAM_CHAT_ID']
+          url = f'https://api.telegram.org/bot{bot}/sendMessage'
+          messages = [
+              {
+                  'chat_id': chat_id,
+                  'text': 'Настройки поиска теперь доступны внизу чата. Откройте меню, выберите станции или линии, цену в BYN и при необходимости радиус, затем нажмите «Применить».',
+                  'reply_markup': {'keyboard': [
+                      [{'text': '🔄 Проверить новые квартиры'}],
+                      [{'text': '⚙️ Настройки поиска'}]],
+                      'resize_keyboard': True, 'is_persistent': True},
+              },
+              {
+                  'chat_id': chat_id,
+                  'text': 'Откройте настройки поиска:',
+                  'reply_markup': {'inline_keyboard': [[
+                      {'text': '⚙️ Настройки поиска', 'callback_data': 'prefs:home'}]]},
+              },
+          ]
+          for payload in messages:
+              request = urllib.request.Request(url, data=json.dumps(payload).encode(),
+                  headers={'Content-Type': 'application/json'})
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  result = json.load(response)
+              assert result['ok'], result.get('description', 'Bot API failed')
+          print('Telegram keyboard and settings entry delivered to configured chat')
           PY
