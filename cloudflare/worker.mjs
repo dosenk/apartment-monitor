@@ -1,6 +1,7 @@
 import { WorkflowEntrypoint } from 'cloudflare:workers';
 import { telegram } from './telegram-api.mjs';
 import { access, scope, scanLock, cursorKey } from './access.mjs';
+import { sourceFailure, scanHeading } from './scan-errors.mjs';
 import { BUTTON, interval, label, matches, onliner, realt, kufar, caption, dueScan } from './logic.mjs';
 import { STATIONS, preferences, toggleStation, toggleOnliner } from './metro.mjs';
 import { DISTRICTS, CITY_DISTRICTS } from './districts.mjs';
@@ -146,15 +147,33 @@ export class ApartmentScan extends WorkflowEntrypoint {
           url = `https://api.kufar.by/search-api/v2/search/rendered-paginated?${params}`;
           parser = kufar;
         } else throw Error(`Unknown source ${source}`);
-        const batch = await step.do(`fetch-${source}-${page}`, () => fetchPage(url, parser));
+        let batch;
+        try {
+          batch = await step.do(`fetch-${source}-${page}`, { retries: { limit: 2, delay: '10 seconds', backoff: 'exponential' }, timeout: '30 seconds' }, () => fetchPage(url, parser));
+        } catch (error) {
+          const reason = sourceFailure(error);
+          console.warn('Apartment source unavailable', source, reason);
+          const next = ({ onliner: 'realt', realt: 'kufar', kufar: 'send' })[source];
+          await step.do(`skip-unavailable-${source}-${page}`, () => env.DB.batch([
+            env.DB.prepare('INSERT OR REPLACE INTO scan_errors(run_id,source,reason) VALUES (?,?,?)').bind(runId, source, reason),
+            env.DB.prepare('UPDATE scan_runs SET stage=?,page=1,cursor=NULL WHERE id=?').bind(next, runId),
+          ]));
+          state = { ...state, stage: next, page: 1, cursor: null };
+          fetched++;
+          continue;
+        }
         const candidates = batch.items.filter(x => matches(x, state.start, state.end, selected));
         const older = batch.items.some(x => Date.parse(x.publishedAt) < cutoff);
         let done;
         if (source === 'onliner') done = !batch.items.length || page >= batch.lastPage || older;
         else if (source === 'realt') done = !batch.items.length || page + 1 > Math.ceil(batch.total / 30) - 2;
         else done = !batch.items.length || batch.items.every(x => Date.parse(x.publishedAt) < cutoff) || !batch.next;
-        if (!done && ((source === 'onliner' && page >= 30) || page >= 100))
-          throw Error(`${source} page limit reached; cannot guarantee full search`);
+        if (!done && ((source === 'onliner' && page >= 30) || page >= 100)) {
+          await step.do(`page-limit-${source}`, () => env.DB.prepare(
+            'INSERT OR REPLACE INTO scan_errors(run_id,source,reason) VALUES (?,?,?)')
+            .bind(runId, source, sourceFailure('page limit')).run());
+          done = true;
+        }
         const next = done ? ({ onliner: 'realt', realt: 'kufar', kufar: 'send' })[source] : source;
         const nextPage = done ? 1 : page + 1;
         const nextCursor = !done && source === 'kufar' ? batch.next : null;
@@ -174,10 +193,11 @@ export class ApartmentScan extends WorkflowEntrypoint {
       }
       const count = async () => (await env.DB.prepare(`SELECT count(*) AS n FROM pending p
         LEFT JOIN user_sent s ON s.key=p.key AND s.chat_id=? WHERE p.run_id=? AND s.key IS NULL`).bind(chatId, runId).first()).n;
+      const failures = await step.do('load-source-errors', async () =>
+        (await env.DB.prepare('SELECT source,reason FROM scan_errors WHERE run_id=? ORDER BY source').bind(runId).all()).results);
       if (!state.header_sent) {
         const total = await step.do('count-pending', count);
-        const heading = `🏠 Квартиры за период ${label(state.start, state.end)}\n` +
-          (total ? `Новых объявлений: ${total}` : 'Новых объявлений нет');
+        const heading = scanHeading(label(state.start, state.end), total, failures);
         await step.do('send-header', async () => {
           await telegram(env, 'sendMessage', { chat_id: env.TELEGRAM_CHAT_ID, text: heading, reply_markup: keyboard });
           await env.DB.prepare('UPDATE scan_runs SET header_sent=1 WHERE id=?').bind(runId).run();
@@ -200,14 +220,16 @@ export class ApartmentScan extends WorkflowEntrypoint {
         return { continued: instance.id, remaining };
       }
       await step.do('finish', () => env.DB.batch([
-        env.DB.prepare(`INSERT INTO meta(key,value) VALUES (?,?)
-          ON CONFLICT(key) DO UPDATE SET value=excluded.value`).bind(cursorKey(chatId), state.end),
+        ...(!failures.length ? [env.DB.prepare(`INSERT INTO meta(key,value) VALUES (?,?)
+          ON CONFLICT(key) DO UPDATE SET value=excluded.value`).bind(cursorKey(chatId), state.end)] :
+          [env.DB.prepare('INSERT OR IGNORE INTO meta(key,value) VALUES (?,?)').bind(cursorKey(chatId), state.start)]),
         env.DB.prepare('DELETE FROM pending WHERE run_id=?').bind(runId),
         env.DB.prepare('DELETE FROM scan_runs WHERE id=?').bind(runId),
         env.DB.prepare('DELETE FROM scan_preferences WHERE run_id=?').bind(runId),
         env.DB.prepare('DELETE FROM scan_recipients WHERE run_id=?').bind(runId),
+        env.DB.prepare('DELETE FROM scan_errors WHERE run_id=?').bind(runId),
       ]));
-      return { bounds: { start: state.start, end: state.end }, delivered: true };
+      return { bounds: { start: state.start, end: state.end }, delivered: true, partial: failures.length > 0 };
     } finally {
       if (!handoff) await step.do('release-lock', () => env.DB.prepare("DELETE FROM locks WHERE name=? AND owner=?").bind(scanLock(chatId), runId).run());
     }
