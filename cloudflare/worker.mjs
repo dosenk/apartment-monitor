@@ -264,6 +264,7 @@ export class ApartmentScan extends WorkflowEntrypoint {
         ORDER BY p.published_at,p.key LIMIT 12`).bind(runId).all()).results);
       for (const row of batch) {
         const item = JSON.parse(row.item);
+        await step.sleep(`pace-${item.key}`, '2 seconds');
         await step.do(`send-${item.key}`, () => sendListing(env, item));
         await step.do(`save-${item.key}`, () => env.DB.prepare('INSERT OR IGNORE INTO sent(key,sent_at) VALUES (?,?)')
           .bind(item.key, new Date().toISOString()).run());
