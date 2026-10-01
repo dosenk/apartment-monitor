@@ -31,6 +31,8 @@ jobs:
                   for item in items[:5]:
                       print('listing fields', {k:v for k,v in item.items() if 'metro' in k.lower() or 'subway' in k.lower() or 'location' in k.lower()})
                       if source=='kufar': print('kufar metro attrs',[v for v in item.get('ad_parameters',[]) if v.get('p')=='metro'])
-                  if source=='realt':\n                      print('realt filters',str(data.get('objectListingFilters'))[:4500])\n                      print('realt metro names', sorted({v.get('metroStationName') for v in items if v.get('metroStationName')}))
+                  if source=='realt':
+                      print('realt filters',str(data.get('objectListingFilters'))[:4500])
+                      print('realt metro names', sorted({v.get('metroStationName') for v in items if v.get('metroStationName')}))
               except Exception as e: print(source, 'ERROR',type(e).__name__,str(e)[:200])
           PY
