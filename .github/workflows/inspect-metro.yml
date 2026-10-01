@@ -23,14 +23,14 @@ jobs:
               ('realt','https://realt.by/rent/flat-for-long/')]
           for source,url in sources:
               try:
-                  headers={'User-Agent':'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131.0 Safari/537.36','Accept':'application/json,text/html','Referer':'https://re.kufar.by/'} if source=='kufar' else None
+                  headers={'User-Agent':'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131.0 Safari/537.36','Accept':'application/json,text/html','Referer':'https://re.kufar.by/'} if source in ('kufar','onliner') else None
                   raw=get(url,headers)
                   data=json.loads(raw) if source!='realt' else json.loads(re.search(r'<script[^>]*id="__NEXT_DATA__"[^>]*>(.*?)</script>',raw,re.S).group(1))['props']['pageProps']
                   items=data['apartments'] if source=='onliner' else data['ads'] if source=='kufar' else data['objects']
                   print(source,'count',len(items),'root keys',list(data)[:30])
                   for item in items[:5]:
                       print('listing fields', {k:v for k,v in item.items() if 'metro' in k.lower() or 'subway' in k.lower() or 'location' in k.lower()})
-                      if source=='kufar': print('kufar metro attrs',[v for v in item.get('ad_parameters',[]) if 'metro' in str(v).lower()])
-                  if source=='realt': print('realt filter roots', [k for k in data if 'filter' in k.lower() or 'metro' in k.lower()])
+                      if source=='kufar': print('kufar metro attrs',[v for v in item.get('ad_parameters',[]) if v.get('p')=='metro'])
+                  if source=='realt':\n                      print('realt filters',str(data.get('objectListingFilters'))[:4500])\n                      print('realt metro names', sorted({v.get('metroStationName') for v in items if v.get('metroStationName')}))
               except Exception as e: print(source, 'ERROR',type(e).__name__,str(e)[:200])
           PY
