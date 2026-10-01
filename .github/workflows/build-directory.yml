@@ -2,7 +2,7 @@ name: Build Belarus settlement directory
 on:
   push:
     branches: [fix/location-flow-rayons]
-    paths: [.github/workflows/build-directory.yml]
+    paths: [.github/workflows/build-directory.yml, .github/scripts/build_geography.py]
 permissions:
   contents: write
 jobs:
