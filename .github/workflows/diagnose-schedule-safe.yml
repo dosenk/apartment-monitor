@@ -39,7 +39,7 @@ jobs:
           print('Scan lock active:',bool(query('SELECT 1 FROM locks WHERE name=? AND expires>?',['scan:'+owner,int(time.time()*1000)])))
           print('Unfinished scan exists:',bool(query('SELECT 1 FROM scan_runs LIMIT 1')))
           instances=api('/workflows/apartment-monitor-scan/instances?per_page=10')
-          patterns={'source_http_403':'source http 403','source_http_429':'source http 429','source_http_5xx':'source http 5',
+          patterns={'source_http_403':'source http 403','realt_failure':'realt.by','onliner_failure':'onliner.by','kufar_failure':'kufar.by','source_http_429':'source http 429','source_http_5xx':'source http 5',
             'onliner_format':'onliner format','realt_format':'realt format','kufar_format':'kufar format',
             'scan_lock_expired':'scan lock expired','scan_lock_timeout':'scan lock held',
             'page_limit':'page limit','telegram_blocked':'bot was blocked','telegram_rate_limit':'too many requests',
