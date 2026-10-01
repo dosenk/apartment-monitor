@@ -21,15 +21,15 @@ test('frequency page, repeated selection and Back survive expired callback retri
     return Response.json({ ok: true, result: { message_id: 42 } });
   });
   const env = { TELEGRAM_CHAT_ID: '123', TELEGRAM_BOT_TOKEN: 'test', WEBHOOK_SECRET: 'secret\n',
-    DB: { prepare: () => ({ bind: (...args) => ({
-      first: async () => ({ settings, awaiting: null }),
+    DB: { prepare: (sql) => ({ bind: (...args) => ({
+      first: async () => sql.includes('bot_users') ? { authorized: 1 } : { settings, awaiting: null },
       run: async () => { if (args[1]) settings = args[1]; },
     }) }) } };
   for (const action of ['frequency', 'frequency:30m', 'frequency:1h', 'home']) {
     const response = await worker.fetch(new Request('https://worker.test/telegram', {
       method: 'POST', headers: { 'X-Telegram-Bot-Api-Secret-Token': 'secret' },
       body: JSON.stringify({ callback_query: { id: 'expired', data: `prefs:${action}`,
-        message: { message_id: 42, chat: { id: 123 } } } }),
+        message: { message_id: 42, chat: { id: 123, type: 'private' } } } }),
     }), env);
     assert.equal(response.status, 200, action);
     assert.equal((await response.json()).ok, true, action);
