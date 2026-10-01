@@ -27,6 +27,8 @@ jobs:
               elif 'realt' in url:
                 m=re.search(r'<script[^>]*id="__NEXT_DATA__"[^>]*>(.*?)</script>',body.decode(),re.S)
                 p=json.loads(m.group(1))['props']['pageProps'];print('KEYS',list(p),'TOTAL',p.get('pagination'),'SAMPLE',[(x.get('townName'),x.get('stateRegionName'),x.get('stateDistrictName'),x.get('location')) for x in p['objects'][:4]])
-              else: print('SQL_HEAD',body[:1500].decode('utf-8','replace'))
+              else:
+                s=body.decode('utf-8','replace')
+                print('SQL_STRUCTURE',s[1500:3900], 'INSERT_SAMPLE',s[s.find('INSERT INTO'):s.find('INSERT INTO')+1300])
             except Exception as e:print('ERROR',url,repr(e))
           PY
