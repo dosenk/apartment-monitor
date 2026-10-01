@@ -45,4 +45,9 @@ jobs:
                   lines=[x.get('line','') for x in props.get('lines',[])]
                   print('STATION',name,feature.get('geometry',{}).get('coordinates'),lines)
           except Exception as e: print('METRO DATA ERROR',type(e).__name__,str(e)[:200])
+          try:
+              html=get('https://r.onliner.by/ak/apartments', {'User-Agent':'Mozilla/5.0','Accept':'text/html'})
+              print('ONLINER PAGE BYTES',len(html))
+              print('ONLINER METRO SNIPPETS',[m.group(0)[:260] for m in re.finditer(r'.{0,90}(?:metro|метро).{0,170}',html,re.I)][:12])
+          except Exception as e: print('ONLINER PAGE ERROR',type(e).__name__,str(e)[:200])
           PY
