@@ -1,5 +1,6 @@
 import { WorkflowEntrypoint } from 'cloudflare:workers';
 import { telegram } from './telegram-api.mjs';
+import { access, scope, scanLock, cursorKey } from './access.mjs';
 import { BUTTON, interval, label, matches, onliner, realt, kufar, caption, dueScan } from './logic.mjs';
 import { STATIONS, preferences, toggleStation, toggleOnliner } from './metro.mjs';
 import { DISTRICTS, CITY_DISTRICTS } from './districts.mjs';
@@ -18,7 +19,7 @@ async function readDraft(env) {
   let row = await env.DB.prepare('SELECT settings,awaiting FROM search_drafts WHERE chat_id=?')
     .bind(env.TELEGRAM_CHAT_ID).first();
   if (!row) {
-    const selected = (await readActive(env)) || preferences(null);
+    const selected = (await readActive(env)) || preferences({ cities: [] });
     if (!selected.locationChosen) {
       selected.cities = [];
       selected.browseOblast = null;
@@ -74,18 +75,20 @@ async function sendListing(env, item) {
 
 async function acquire(env, owner) {
   const now = Date.now();
-  const result = await env.DB.prepare(`INSERT INTO locks (name, owner, expires) VALUES ('scan', ?, ?)
+  const result = await env.DB.prepare(`INSERT INTO locks (name, owner, expires) VALUES (?, ?, ?)
     ON CONFLICT(name) DO UPDATE SET owner=excluded.owner, expires=excluded.expires
-    WHERE locks.expires < ?`).bind(owner, now + 30 * 60 * 1000, now).run();
+    WHERE locks.expires < ?`).bind(scanLock(env.TELEGRAM_CHAT_ID), owner, now + 30 * 60 * 1000, now).run();
   return result.meta.changes > 0;
 }
 
 export class ApartmentScan extends WorkflowEntrypoint {
   async run(event, step) {
-    const env = this.env;
     const runId = event.payload?.runId || event.instanceId;
+    const chatId = event.payload?.chatId || (event.payload?.runId ?
+      (await this.env.DB.prepare('SELECT chat_id FROM scan_recipients WHERE run_id=?').bind(runId).first())?.chat_id : null) || this.env.TELEGRAM_CHAT_ID;
+    const env = scope(this.env, chatId);
     let handoff = false;
-    const nextInstance = async () => ({ id: (await env.SCAN.create({ params: { runId } })).id });
+    const nextInstance = async () => ({ id: (await env.SCAN.create({ params: { runId, chatId } })).id });
     try {
       if (!event.payload?.runId) {
         const kind = event.payload?.kind || ({ '0 6 * * *': 'morning', '0 11 * * *': 'midday', '0 19 * * *': 'evening' }[event.schedule?.cron]);
@@ -100,7 +103,7 @@ export class ApartmentScan extends WorkflowEntrypoint {
         const selected = await step.do('read-settings', () => readActive(env));
         if (!selected) return { skipped: true, reason: 'search_not_configured' };
         const cursor = await step.do('read-cursor', async () =>
-          (await env.DB.prepare("SELECT value FROM meta WHERE key='covered_until'").first())?.value || null);
+          (await env.DB.prepare('SELECT value FROM meta WHERE key=?').bind(cursorKey(chatId)).first())?.value || null);
         const bounds = interval(kind, event.payload?.requestedAt || event.schedule?.scheduledTime || Date.now(), cursor);
         if (bounds.start >= bounds.end) return { skipped: true, bounds };
         await step.do('init-run', () => env.DB.batch([
@@ -109,11 +112,12 @@ export class ApartmentScan extends WorkflowEntrypoint {
             .bind(runId, bounds.start, bounds.end),
           env.DB.prepare('INSERT OR IGNORE INTO scan_preferences(run_id,settings) VALUES (?,?)')
             .bind(runId, JSON.stringify(selected)),
+          env.DB.prepare('INSERT OR IGNORE INTO scan_recipients(run_id,chat_id) VALUES (?,?)').bind(runId, chatId),
         ]));
       } else {
         const renewed = await step.do('renew-lock', async () => env.DB.prepare(
-          "UPDATE locks SET expires=? WHERE name='scan' AND owner=?")
-          .bind(Date.now() + 30 * 60 * 1000, runId).run());
+          "UPDATE locks SET expires=? WHERE name=? AND owner=?")
+          .bind(Date.now() + 30 * 60 * 1000, scanLock(chatId), runId).run());
         if (!renewed.meta.changes) throw Error('Scan lock expired or belongs to another check');
       }
       let state = await step.do('load-run', () => env.DB.prepare('SELECT * FROM scan_runs WHERE id=?').bind(runId).first());
@@ -169,7 +173,7 @@ export class ApartmentScan extends WorkflowEntrypoint {
         return { continued: instance.id, source: state.stage, page: state.page };
       }
       const count = async () => (await env.DB.prepare(`SELECT count(*) AS n FROM pending p
-        LEFT JOIN sent s ON s.key=p.key WHERE p.run_id=? AND s.key IS NULL`).bind(runId).first()).n;
+        LEFT JOIN user_sent s ON s.key=p.key AND s.chat_id=? WHERE p.run_id=? AND s.key IS NULL`).bind(chatId, runId).first()).n;
       if (!state.header_sent) {
         const total = await step.do('count-pending', count);
         const heading = `🏠 Квартиры за период ${label(state.start, state.end)}\n` +
@@ -180,14 +184,14 @@ export class ApartmentScan extends WorkflowEntrypoint {
         });
       }
       const batch = await step.do('pending-batch', async () => (await env.DB.prepare(`SELECT p.item FROM pending p
-        LEFT JOIN sent s ON s.key=p.key WHERE p.run_id=? AND s.key IS NULL
-        ORDER BY p.published_at,p.key LIMIT 12`).bind(runId).all()).results);
+        LEFT JOIN user_sent s ON s.key=p.key AND s.chat_id=? WHERE p.run_id=? AND s.key IS NULL
+        ORDER BY p.published_at,p.key LIMIT 12`).bind(chatId, runId).all()).results);
       for (const row of batch) {
         const item = JSON.parse(row.item);
         await step.sleep(`pace-${item.key}`, '2 seconds');
         await step.do(`send-${item.key}`, () => sendListing(env, item));
-        await step.do(`save-${item.key}`, () => env.DB.prepare('INSERT OR IGNORE INTO sent(key,sent_at) VALUES (?,?)')
-          .bind(item.key, new Date().toISOString()).run());
+        await step.do(`save-${item.key}`, () => env.DB.prepare('INSERT OR IGNORE INTO user_sent(chat_id,key,sent_at) VALUES (?,?,?)')
+          .bind(chatId, item.key, new Date().toISOString()).run());
       }
       const remaining = await step.do('remaining', count);
       if (remaining) {
@@ -196,15 +200,16 @@ export class ApartmentScan extends WorkflowEntrypoint {
         return { continued: instance.id, remaining };
       }
       await step.do('finish', () => env.DB.batch([
-        env.DB.prepare(`INSERT INTO meta(key,value) VALUES ('covered_until',?)
-          ON CONFLICT(key) DO UPDATE SET value=excluded.value`).bind(state.end),
+        env.DB.prepare(`INSERT INTO meta(key,value) VALUES (?,?)
+          ON CONFLICT(key) DO UPDATE SET value=excluded.value`).bind(cursorKey(chatId), state.end),
         env.DB.prepare('DELETE FROM pending WHERE run_id=?').bind(runId),
         env.DB.prepare('DELETE FROM scan_runs WHERE id=?').bind(runId),
         env.DB.prepare('DELETE FROM scan_preferences WHERE run_id=?').bind(runId),
+        env.DB.prepare('DELETE FROM scan_recipients WHERE run_id=?').bind(runId),
       ]));
       return { bounds: { start: state.start, end: state.end }, delivered: true };
     } finally {
-      if (!handoff) await step.do('release-lock', () => env.DB.prepare("DELETE FROM locks WHERE name='scan' AND owner=?").bind(runId).run());
+      if (!handoff) await step.do('release-lock', () => env.DB.prepare("DELETE FROM locks WHERE name=? AND owner=?").bind(scanLock(chatId), runId).run());
     }
   }
 }
@@ -212,22 +217,36 @@ export default {
   async scheduled(controller, env, ctx) {
     if (controller.cron !== '*/10 * * * *') throw Error(`Unexpected Cron Trigger: ${controller.cron}`);
     ctx.waitUntil((async () => {
-      const selected = await readActive(env);
-      if (!selected) return;
-      const kind = dueScan(selected.frequency, controller.scheduledTime);
-      if (!kind) return;
-      const lock = await env.DB.prepare("SELECT expires FROM locks WHERE name='scan'").first();
-      if (lock && lock.expires > Date.now()) return;
-      await env.SCAN.create({ params: { kind, requestedAt: controller.scheduledTime } });
+      const users = (await env.DB.prepare(`SELECT p.chat_id,p.settings FROM search_preferences p
+        JOIN bot_users u ON u.chat_id=p.chat_id WHERE u.authorized=1`).all()).results;
+      for (const user of users) {
+        const selected = preferences(JSON.parse(user.settings));
+        const kind = dueScan(selected.frequency, controller.scheduledTime);
+        if (!kind) continue;
+        const lock = await env.DB.prepare('SELECT expires FROM locks WHERE name=?').bind(scanLock(user.chat_id)).first();
+        if (lock && lock.expires > Date.now()) continue;
+        await env.SCAN.create({ params: { chatId: user.chat_id, kind, requestedAt: controller.scheduledTime } });
+      }
     })());
   },
-  async fetch(request, env) {
+  async fetch(request, bindings) {
+    let env = bindings;
     const url = new URL(request.url);
-    if (url.pathname === '/health' && request.method === 'GET') return Response.json({ ok: true });
+    if (url.pathname === '/health' && request.method === 'GET') return Response.json({ ok: true, multi_user: true, login_ready: Boolean(env.BOT_ACCESS_PASSWORD) });
     if (url.pathname !== '/telegram' || request.method !== 'POST') return new Response('Not found', { status: 404 });
     if (request.headers.get('X-Telegram-Bot-Api-Secret-Token') !== env.WEBHOOK_SECRET?.trim()) return new Response('Forbidden', { status: 403 });
     try {
     const update = await request.json();
+    const chat = update.callback_query?.message?.chat || update.message?.chat;
+    const wasAuthorized = chat?.type === 'private' ?
+      (await env.DB.prepare('SELECT authorized FROM bot_users WHERE chat_id=?').bind(String(chat.id)).first())?.authorized : false;
+    if (!(await access(env, update))) return Response.json({ ok: true });
+    env = scope(env, chat.id);
+    if (!wasAuthorized) {
+      await telegram(env, 'sendMessage', { chat_id: env.TELEGRAM_CHAT_ID, text: 'У каждого пользователя свои настройки и история объявлений.', reply_markup: keyboard });
+      await showMenu(env, 'home');
+      return Response.json({ ok: true });
+    }
     if (String(update.callback_query?.message?.chat?.id) === env.TELEGRAM_CHAT_ID) {
       const callback = update.callback_query;
       const data = callback.data || '';
@@ -237,7 +256,7 @@ export default {
             text: 'Сначала сохраните настройки поиска.', show_alert: true });
           return Response.json({ ok: true });
         }
-        const instance = await env.SCAN.create({ params: { kind: 'check', requestedAt: Date.now() } });
+        const instance = await env.SCAN.create({ params: { chatId: env.TELEGRAM_CHAT_ID, kind: 'check', requestedAt: Date.now() } });
         await telegram(env, 'answerCallbackQuery', { callback_query_id: callback.id, text: 'Проверяю новые квартиры…' });
         return Response.json({ ok: true, id: instance.id });
       }
@@ -432,7 +451,7 @@ export default {
         await showMenu(env, 'home');
         return Response.json({ ok: true });
       }
-      const instance = await env.SCAN.create({ params: { kind: 'check', requestedAt: Date.now() } });
+      const instance = await env.SCAN.create({ params: { chatId: env.TELEGRAM_CHAT_ID, kind: 'check', requestedAt: Date.now() } });
       await telegram(env, 'sendMessage', { chat_id: env.TELEGRAM_CHAT_ID,
         text: 'Проверяю новые квартиры…', reply_markup: keyboard });
       return Response.json({ ok: true, id: instance.id });
