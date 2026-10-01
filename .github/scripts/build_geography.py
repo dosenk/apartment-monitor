@@ -46,6 +46,9 @@ def build(raw):
             if not any(r[0] == name and r[3] == 'г.' for r in regional):
                 lat, lon = CAPITAL_COORDS[i] if name == DIRECT[i][0] else (0, 0)
                 regional.append([name, oblast, None, 'г.', lat, lon])
+        if i == 4 and not any(r[0] == 'Боровляны' and r[2] == 'Минский' for r in regional):
+            # The source mixes the identically named Borisov settlement with Minsk-area coordinates.
+            regional.append(['Боровляны', oblast, 'Минский', 'д.', 54.0022, 27.6754])
         places = sorted({(r[0], r[2], r[3], r[4], r[5]) for r in regional},
                         key=lambda r: (r[0], r[1] or '', r[3], r[4]))
         data = {'rayons': rayons, 'direct': DIRECT[i], 'places': places}
