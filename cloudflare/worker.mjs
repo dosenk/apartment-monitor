@@ -2,14 +2,17 @@ import { WorkflowEntrypoint } from 'cloudflare:workers';
 import { BUTTON, interval, label, matches, onliner, realt, kufar, caption, dueScan } from './logic.mjs';
 import { LINES, STATIONS, FREQUENCIES, preferences, toggleStation, toggleOnliner } from './metro.mjs';
 import { DISTRICTS } from './districts.mjs';
+import { CITIES } from './geography.mjs';
+import { OBLASTS, rayons, cities, cityName, isMinskSelected } from './location.mjs';
 
 const AGENT = 'ApartmentMonitor/1.0 (personal rental alerts)';
 const SETTINGS_BUTTON = '⚙️ Настройки поиска';
 const OLD_SETTINGS_BUTTON = '⚙️ Настроить метро';
 const HELP_BUTTON = 'ℹ️ Как пользоваться';
+const CURRENT_BUTTON = '📋 Текущие настройки';
 const FREQUENCY_LABELS = { scheduled: '09:00, 14:00, 22:00', '10m': 'каждые 10 минут',
   '30m': 'каждые 30 минут', '1h': 'каждый час', '4h': 'каждые 4 часа', '8h': 'каждые 8 часов' };
-const keyboard = { keyboard: [[{ text: BUTTON }], [{ text: SETTINGS_BUTTON }], [{ text: HELP_BUTTON }]],
+const keyboard = { keyboard: [[{ text: BUTTON }], [{ text: SETTINGS_BUTTON }, { text: CURRENT_BUTTON }], [{ text: HELP_BUTTON }]],
   resize_keyboard: true, is_persistent: true };
 
 async function readActive(env) {
@@ -38,17 +41,59 @@ async function saveDraft(env, selected, awaiting = null) {
 
 function menu(screen, selected) {
   const pick = (label, data) => ({ text: label, callback_data: `prefs:${data}` });
+  if (screen === 'locations') return {
+    text: '📍 Местоположение · шаг 1\nСначала выберите область, затем район области и город. ' +
+      'Можно отметить несколько городов в разных районах и областях. Выбранные города ищутся целиком; ' +
+      'районы города задаются отдельно, если доступны. Отметки сохранятся после «Применить».',
+    inline_keyboard: [
+      ...OBLASTS.map((name, index) => [pick(`${name} область`, `oblast:${index}`)]),
+      [pick('⬅️ Настройки', 'home')],
+    ],
+  };
+  if (/^oblast:\d$/.test(screen)) {
+    const index = Number(screen.split(':')[1]);
+    const names = rayons(OBLASTS[index]);
+    return {
+      text: `📍 ${OBLASTS[index]} область\nВыберите район области. Областные центры и города, 'район которых отсутствует в открытом справочнике, находятся в группе «Города без района в справочнике».`,
+      inline_keyboard: [
+        ...names.map((name, i) => [pick(name, `rayon:${index}:${i}`)]),
+        [pick('⬅️ Области', 'locations')],
+      ],
+    };
+  }
+  if (/^rayon:\d:\d+(?::\d+)?$/.test(screen)) {
+    const [, oblastIndex, rayonIndex, pageText] = screen.split(':');
+    const names = rayons(OBLASTS[Number(oblastIndex)]);
+    const rayon = names[Number(rayonIndex)];
+    const entries = cities(OBLASTS[Number(oblastIndex)], rayon);
+    const pages = Math.max(1, Math.ceil(entries.length / 8));
+    const page = Math.min(Number(pageText || 0), pages - 1);
+    return {
+      text: `📍 ${OBLASTS[Number(oblastIndex)]} область · ${rayon}\nОтметьте нужные города. Весь выбранный город включён в поиск. Страница ${page + 1}/${pages}.`,
+      inline_keyboard: [
+        ...entries.slice(page * 8, (page + 1) * 8).map(({ row, index }) =>
+          [pick(`${selected.cities.includes(index) ? '☑️' : '☐'} ${row[0]}`,
+            `city:${index}:${oblastIndex}:${rayonIndex}:${page}`)]),
+        [
+          ...(page ? [pick('◀️', `rayon:${oblastIndex}:${rayonIndex}:${page - 1}`)] : []),
+          ...(page + 1 < pages ? [pick('▶️', `rayon:${oblastIndex}:${rayonIndex}:${page + 1}`)] : []),
+        ].filter(Boolean),
+        [pick('⬅️ Районы области', `oblast:${oblastIndex}`), pick('⚙️ Настройки', 'home')],
+      ].filter(row => row.length),
+    };
+  }
   if (screen === 'help') return {
     text: 'ℹ️ Как пользоваться\n\n' +
-      '1. Отметьте станции для Realt и Kufar, линии для Onliner и районы Минска. Можно выбрать несколько; метро и район действуют вместе.\n' +
-      '2. При желании задайте максимальную цену в BYN и радиус в км. Число 0 убирает ограничение.\n' +
-      '3. Выберите частоту и нажмите «Применить». Новые объявления придут по расписанию или по кнопке «Проверить новые квартиры». Настройки можно изменить позже.\n\n' +
+      '1. Выберите область → район области → город. Можно отметить несколько городов, каждый выбранный город ищется целиком.\n' +
+      '2. Если среди городов есть Минск, можно дополнительно выбрать его районы, метро и радиус. Пустой список районов не ограничивает поиск по районам. Метро и радиус действуют только на объявления Минска.\n' +
+      '3. При желании задайте максимальную цену в BYN. Число 0 убирает ограничение.\n' +
+      '4. Выберите частоту и нажмите «Применить». Кнопка «Текущие настройки» покажет сохранённые параметры; в меню редактирования показан черновик.\n\n' +
       '📏 Радиус: для Realt и Kufar — от выбранных станций; достаточно одной. Для Onliner — от ближайшей к квартире станции, если она на выбранной линии. Если метро не выбрано, радиус считается от площади Якуба Коласа. Без радиуса расстояние не ограничено. Исключение: «Возле метро» в Onliner означает до 1 км, если свой радиус не указан.\n\n' +
       'Уже присланные объявления повторно не отправляются.',
     inline_keyboard: [[pick('⚙️ К настройкам', 'home')]],
   };
   if (screen === 'districts') return {
-    text: '🗺 Районы Минска\nВыберите один или несколько районов. Без выбора район не ограничивает поиск. Если также выбрано метро, квартира должна соответствовать обоим условиям.',
+    text: '🗺 Районы Минска\nВыберите один или несколько районов. Без выбора фильтр по району не применяется. Если также выбрано метро, квартира должна соответствовать обоим условиям.',
     inline_keyboard: [
       ...DISTRICTS.map((name, index) => [pick(`${selected.districts.includes(name) ? '☑️' : '☐'} ${name}`, `district:${index}`)]),
       [pick('Сбросить районы', 'reset:districts'), pick('⬅️ Настройки', 'home')],
@@ -89,26 +134,43 @@ function menu(screen, selected) {
   }
   const stationNames = selected.stations.map(i => STATIONS[i]?.[0]).filter(Boolean);
   const onlinerNames = selected.onliner.map(id => id === 'near' ? 'возле метро' : LINES.find(x => String(x.id) === id)?.name).filter(Boolean);
+  const minsk = isMinskSelected(selected);
   return {
     text: '⚙️ Настройки поиска · черновик\n' +
-      `Realt + Kufar: ${stationNames.length ? stationNames.join(', ') : 'любое метро'}\n` +
-      `Onliner: ${onlinerNames.length ? onlinerNames.join(', ') : 'любая линия'}\n` +
-      `Районы: ${selected.districts.length ? selected.districts.join(', ') : 'все районы'}\n` +
+      `Города: ${selected.cities.map(cityName).join(', ') || 'не выбраны'}\n` +
+      (minsk ? `Realt + Kufar, метро: ${stationNames.join(', ') || 'фильтр не задан'}\n` +
+        `Onliner, метро: ${onlinerNames.join(', ') || 'фильтр не задан'}\n` +
+        `Районы Минска: ${selected.districts.join(', ') || 'фильтр не задан'}\n` : '') +
       `Цена: ${selected.maxByn ? `до ${selected.maxByn} BYN` : 'без ограничения'}\n` +
-      `Радиус: ${selected.radiusKm ? `${selected.radiusKm} км` : 'не задан'}\n` +
+      (minsk ? `Радиус: ${selected.radiusKm ? `${selected.radiusKm} км` : 'не задан'}\n` : '') +
       `Проверка: ${FREQUENCY_LABELS[selected.frequency]}\n\n` +
-      'Радиус считается от выбранных станций; без выбора метро — от Якуба Коласа. ' +
       'Сохраните изменения кнопкой «Применить». Уже отправленные объявления не повторяются.',
     inline_keyboard: [
-      [pick('🚇 Станции Realt + Kufar', 'stations:1')],
-      [pick('🚇 Линии Onliner', 'onliner')],
-      [pick('🗺 Районы Минска', 'districts')],
-      [pick('💰 Цена, BYN', 'input:price'), pick('📏 Радиус, км', 'input:radius')],
+      [pick('📍 Область → район → город', 'locations')],
+      ...(minsk ? [[pick('🚇 Станции Realt + Kufar', 'stations:1')],
+        [pick('🚇 Линии Onliner', 'onliner')], [pick('🗺 Районы Минска', 'districts')]] : []),
+      [pick('💰 Цена, BYN', 'input:price'), ...(minsk ? [pick('📏 Радиус, км', 'input:radius')] : [])],
       [pick('⏱ Частота проверки', 'frequency')],
       [pick(HELP_BUTTON, 'help')],
       [pick('✅ Применить', 'apply'), pick('Отмена', 'cancel')],
     ],
   };
+}
+
+function settingsSummary(selected) {
+  if (!selected) return '📋 Текущие настройки\nПоиск ещё не настроен.';
+  const stationNames = selected.stations.map(i => STATIONS[i]?.[0]).filter(Boolean);
+  const onlinerNames = selected.onliner.map(id => id === 'near' ? 'возле метро' :
+    LINES.find(x => String(x.id) === id)?.name).filter(Boolean);
+  const minsk = isMinskSelected(selected);
+  return '📋 Текущие настройки поиска\n' +
+    `Города: ${selected.cities.map(cityName).join(', ')}\n` +
+    (minsk ? `Realt + Kufar, метро: ${stationNames.join(', ') || 'фильтр не задан'}\n` +
+      `Onliner, метро: ${onlinerNames.join(', ') || 'фильтр не задан'}\n` +
+      `Районы Минска: ${selected.districts.join(', ') || 'фильтр не задан'}\n` : '') +
+    `Цена: ${selected.maxByn ? `до ${selected.maxByn} BYN` : 'без ограничения'}\n` +
+    (minsk ? `Радиус: ${selected.radiusKm ? `${selected.radiusKm} км` : 'не задан'}\n` : '') +
+    `Частота: ${FREQUENCY_LABELS[selected.frequency]}`;
 }
 
 async function showMenu(env, screen, messageId) {
@@ -217,7 +279,7 @@ export class ApartmentScan extends WorkflowEntrypoint {
           url = `https://realt.by/rent/flat-for-long/${page === 1 ? '' : `?page=${page}`}`;
           parser = realt;
         } else if (source === 'kufar') {
-          const params = new URLSearchParams({ cat: '1010', typ: 'let', rgn: '7', size: '100', sort: 'lst.d', lang: 'ru' });
+          const params = new URLSearchParams({ cat: '1010', typ: 'let', size: '100', sort: 'lst.d', lang: 'ru' });
           if (state.cursor) params.set('cursor', state.cursor);
           url = `https://api.kufar.by/search-api/v2/search/rendered-paginated?${params}`;
           parser = kufar;
@@ -325,7 +387,15 @@ export default {
         let screen = 'home';
         const action = data.slice(6);
         const { selected, awaiting } = await readDraft(env);
-        if (/^station:\d+$/.test(action)) {
+        if (action === 'locations' || /^oblast:\d$/.test(action) ||
+          /^rayon:\d:\d+(?::\d+)?$/.test(action)) screen = action;
+        else if (/^city:\d+:\d:\d+:\d+$/.test(action)) {
+          const [, cityIndex, oblastIndex, rayonIndex, page] = action.split(':').map(Number);
+          screen = `rayon:${oblastIndex}:${rayonIndex}:${page}`;
+          if (CITIES[cityIndex]) await saveDraft(env, { ...selected,
+            cities: selected.cities.includes(cityIndex) ? selected.cities.filter(x => x !== cityIndex) :
+              [...selected.cities, cityIndex] });
+        } else if (/^station:\d+$/.test(action)) {
           const index = Number(action.split(':')[1]);
           screen = `stations:${STATIONS[index]?.[1] || 1}`;
           if (STATIONS[index]) await saveDraft(env, toggleStation(selected, index));
@@ -364,6 +434,11 @@ export default {
               text: 'Сначала отправьте число или 0 для сброса.' });
             return Response.json({ ok: true });
           }
+          if (!selected.cities.length) {
+            await telegram(env, 'answerCallbackQuery', { callback_query_id: callback.id,
+              text: 'Выберите хотя бы один город.', show_alert: true });
+            return Response.json({ ok: true });
+          }
           await env.DB.batch([
             env.DB.prepare(`INSERT INTO search_preferences(chat_id,settings) VALUES (?,?)
               ON CONFLICT(chat_id) DO UPDATE SET settings=excluded.settings`)
@@ -393,6 +468,11 @@ export default {
       .bind(env.TELEGRAM_CHAT_ID).first();
     if (update.message?.text === HELP_BUTTON || update.message?.text === '/help') {
       await showMenu(env, 'help');
+      return Response.json({ ok: true });
+    }
+    if (update.message?.text === CURRENT_BUTTON || update.message?.text === '/current') {
+      await telegram(env, 'sendMessage', { chat_id: env.TELEGRAM_CHAT_ID,
+        text: settingsSummary(await readActive(env)), reply_markup: keyboard });
       return Response.json({ ok: true });
     }
     if (draft?.awaiting && ([SETTINGS_BUTTON, OLD_SETTINGS_BUTTON, '/cancel', '/start'].includes(update.message?.text))) {
