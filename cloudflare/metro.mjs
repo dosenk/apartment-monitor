@@ -45,16 +45,23 @@ export const STATIONS = [
   ['Слуцкий Гостинец', 3, 53.84273, 27.53396],
 ];
 
-export const DEFAULT_PREFERENCES = Object.freeze({ stations: [], onliner: [], maxByn: null, radiusKm: null });
+import { DISTRICTS } from './districts.mjs';
+
+export const FREQUENCIES = ['scheduled', '10m', '30m', '1h', '4h', '8h'];
+export const DEFAULT_PREFERENCES = Object.freeze({ stations: [], onliner: [], districts: [],
+  maxByn: null, radiusKm: null, frequency: 'scheduled' });
 
 export function preferences(value) {
   const stations = Array.isArray(value?.stations) ? value.stations : [];
   const onliner = Array.isArray(value?.onliner) ? value.onliner : [];
+  const districts = Array.isArray(value?.districts) ? value.districts : [];
   return {
     stations: [...new Set(stations.filter(x => Number.isInteger(x) && x >= 0 && x < STATIONS.length))],
     onliner: [...new Set(onliner.filter(x => ['near', '1', '2', '3'].includes(x)))],
+    districts: [...new Set(districts.filter(x => DISTRICTS.includes(x)))],
     maxByn: Number.isFinite(value?.maxByn) && value.maxByn > 0 ? value.maxByn : null,
     radiusKm: Number.isFinite(value?.radiusKm) && value.radiusKm > 0 ? value.radiusKm : null,
+    frequency: FREQUENCIES.includes(value?.frequency) ? value.frequency : 'scheduled',
   };
 }
 
