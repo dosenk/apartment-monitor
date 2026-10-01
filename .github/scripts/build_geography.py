@@ -49,7 +49,7 @@ def build(raw):
                         key=lambda r: (r[0], r[1] or '', r[3], r[4]))
         data = {'rayons': rayons, 'direct': DIRECT[i], 'places': places}
         datasets.append(data)
-        print(oblast, 'rayons=', len(rayons), 'places=', len(places), 'inferred_centres=', inferred)
+        print(oblast, 'rayons=', rayons, 'places=', len(places), 'inferred_centres=', inferred)
     return datasets
 
 
