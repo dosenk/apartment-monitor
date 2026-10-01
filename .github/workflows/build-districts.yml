@@ -67,7 +67,7 @@ jobs:
           Path('cloudflare/districts.json').write_text(
               json.dumps({'source': 'OpenStreetMap contributors (ODbL), via Nominatim',
                   'city': city['geojson'], 'districts': output},
-                  ensure_ascii=False, separators=(',', ':')) + '\\n')
+                  ensure_ascii=False, separators=(',', ':')) + '\n')
           PY
       - name: Commit district geometry
         run: |
