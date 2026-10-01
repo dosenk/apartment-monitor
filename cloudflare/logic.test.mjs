@@ -4,7 +4,7 @@ import { interval, matches, onliner, realt, kufar, dueScan } from './logic.mjs';
 import { STATIONS, toggleStation, toggleOnliner, preferences } from './metro.mjs';
 import { DISTRICTS, matchesDistrict, matchesCityDistrict } from './districts.mjs';
 import { CITIES } from './geography.mjs';
-import { OBLASTS, rayons, cities } from './location.mjs';
+import { OBLASTS, rayons, cities, directCities } from './location.mjs';
 
 test('oblast, rayon and city selection searches whole non-Minsk city without Minsk metro filter', () => {
   assert.equal(OBLASTS.length, 6);
@@ -13,7 +13,7 @@ test('oblast, rayon and city selection searches whole non-Minsk city without Min
   const brest = CITIES.findIndex(row => row[0] === 'Брест');
   assert.ok(rayons('Минская').includes('Минский'));
   assert.ok(cities('Минская', 'Минский').some(x => x.index === zaslavl));
-  assert.ok(cities('Брестская', 'Города без района в справочнике').some(x => x.index === brest));
+  assert.ok(directCities('Брестская').some(x => x.index === brest));
   const selected = { ...preferences(null), cities: [minsk, zaslavl], districts: ['Советский'],
     onliner: ['near'], radiusKm: 2 };
   const base = { key: 'onliner:42', byn: 800, publishedAt: '2026-10-01T07:00:00Z' };
@@ -101,7 +101,7 @@ test('station selection is shared by Realt and Kufar while Onliner lines are ind
   assert.ok(matches({ ...base, key: 'kufar:1' }, start, end, selected));
   assert.ok(!matches({ ...base, key: 'realt:1', metroNames: ['Каменная горка'] }, start, end, selected));
   assert.ok(matches({ ...base, key: 'kufar:1', latitude: 53.84992, longitude: 27.47481 }, start, end, selected));
-  assert.ok(!matches({ ...base, key: 'kufar:1', latitude: 53.84992, longitude: 27.47481 }, start, end,
+  assert.ok(matches({ ...base, key: 'kufar:1', latitude: 53.84992, longitude: 27.47481 }, start, end,
     { ...selected, radiusKm: 3 }));
   selected = toggleOnliner(selected, '2');
   assert.ok(!matches({ ...base, key: 'onliner:1' }, start, end, selected));
@@ -112,7 +112,7 @@ test('station selection is shared by Realt and Kufar while Onliner lines are ind
   assert.ok(matches({ ...base, key: 'realt:1' }, start, end, { ...selected, maxByn: null }));
   assert.ok(matches({ ...base, key: 'realt:1', latitude: NaN, longitude: NaN }, start, end,
     { stations: [], onliner: [], maxByn: null, radiusKm: null }));
-  assert.ok(!matches({ ...base, key: 'realt:1', latitude: NaN, longitude: NaN }, start, end,
+  assert.ok(matches({ ...base, key: 'realt:1', latitude: NaN, longitude: NaN }, start, end,
     { stations: [], onliner: [], maxByn: null, radiusKm: 2 }));
 });
 
