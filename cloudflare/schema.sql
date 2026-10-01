@@ -8,3 +8,8 @@ CREATE TABLE IF NOT EXISTS pending (run_id TEXT NOT NULL, key TEXT NOT NULL, pub
 CREATE TABLE IF NOT EXISTS scan_preferences (run_id TEXT PRIMARY KEY, settings TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS search_preferences (chat_id TEXT PRIMARY KEY, settings TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS search_drafts (chat_id TEXT PRIMARY KEY, settings TEXT NOT NULL, awaiting TEXT);
+CREATE TABLE IF NOT EXISTS bot_users (chat_id TEXT PRIMARY KEY, authorized INTEGER NOT NULL DEFAULT 0,
+  failures INTEGER NOT NULL DEFAULT 0, blocked_until INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS user_sent (chat_id TEXT NOT NULL, key TEXT NOT NULL, sent_at TEXT NOT NULL,
+  PRIMARY KEY (chat_id,key));
+CREATE TABLE IF NOT EXISTS scan_recipients (run_id TEXT PRIMARY KEY, chat_id TEXT NOT NULL);
