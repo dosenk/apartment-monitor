@@ -13,3 +13,5 @@ CREATE TABLE IF NOT EXISTS bot_users (chat_id TEXT PRIMARY KEY, authorized INTEG
 CREATE TABLE IF NOT EXISTS user_sent (chat_id TEXT NOT NULL, key TEXT NOT NULL, sent_at TEXT NOT NULL,
   PRIMARY KEY (chat_id,key));
 CREATE TABLE IF NOT EXISTS scan_recipients (run_id TEXT PRIMARY KEY, chat_id TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS scan_errors (run_id TEXT NOT NULL, source TEXT NOT NULL, reason TEXT NOT NULL,
+  PRIMARY KEY (run_id,source));
