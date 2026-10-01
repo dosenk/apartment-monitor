@@ -1,0 +1,36 @@
+name: Inspect source metro data
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/inspect-metro.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Inspect public listing fields
+        run: |
+          python - <<'PY'
+          import json, re, urllib.request, urllib.parse
+          def get(url, headers=None):
+              req=urllib.request.Request(url,headers=headers or {'User-Agent':'ApartmentMonitor/1.0'})
+              with urllib.request.urlopen(req,timeout=35) as r: return r.read().decode()
+          sources=[
+              ('onliner','https://ak.api.onliner.by/search/apartments?rent_type%5B%5D=1_room&order=created_at%3Adesc&page=1'),
+              ('kufar','https://api.kufar.by/search-api/v2/search/rendered-paginated?cat=1010&typ=let&rgn=7&size=10&sort=lst.d&lang=ru'),
+              ('realt','https://realt.by/rent/flat-for-long/')]
+          for source,url in sources:
+              try:
+                  headers={'User-Agent':'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131.0 Safari/537.36','Accept':'application/json,text/html','Referer':'https://re.kufar.by/'} if source=='kufar' else None
+                  raw=get(url,headers)
+                  data=json.loads(raw) if source!='realt' else json.loads(re.search(r'<script[^>]*id="__NEXT_DATA__"[^>]*>(.*?)</script>',raw,re.S).group(1))['props']['pageProps']
+                  items=data['apartments'] if source=='onliner' else data['ads'] if source=='kufar' else data['objects']
+                  print(source,'count',len(items),'root keys',list(data)[:30])
+                  for item in items[:5]:
+                      print('listing fields', {k:v for k,v in item.items() if 'metro' in k.lower() or 'subway' in k.lower() or 'location' in k.lower()})
+                      if source=='kufar': print('kufar metro attrs',[v for v in item.get('ad_parameters',[]) if 'metro' in str(v).lower()])
+                  if source=='realt': print('realt filter roots', [k for k in data if 'filter' in k.lower() or 'metro' in k.lower()])
+              except Exception as e: print(source, 'ERROR',type(e).__name__,str(e)[:200])
+          PY
