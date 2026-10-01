@@ -16,7 +16,7 @@ Each completed check sends one heading with the exact Minsk-time publication per
 
 ## Search settings in Telegram
 
-Send `/start` to the bot in your private chat. The persistent keyboard has **🔄 Проверить новые квартиры** and **⚙️ Настройки поиска**. Open settings to edit a draft:
+Send `/start` to the bot in your private chat. The persistent keyboard has **🔄 Проверить новые квартиры**, **⚙️ Настройки поиска**, and **ℹ️ Как пользоваться**. The help button is also inside the settings menu and explains station selection, price, radius, and applying changes. Open settings to edit a draft:
 
 - **🚇 Станции Realt + Kufar:** select one or several individual metro stations using the checkbox buttons. With none selected, these sites are not limited by metro.
 - **🚇 Линии Onliner:** select one or several of the three lines, or **Возле метро**. Onliner listing data has no station field in this integration, so the line is inferred from the closest station to the listing coordinates. **Возле метро** means within 1 km of the nearest station when no custom radius is set.
