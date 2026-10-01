@@ -107,7 +107,7 @@ test('one users sent listing and cursor do not suppress another users delivery',
     sql.prepare('INSERT INTO pending VALUES (?,?,?,?)').run(runId, item.key, item.publishedAt, JSON.stringify(item));
   }
   const env = { DB, TELEGRAM_CHAT_ID: '999', TELEGRAM_BOT_TOKEN: 'test' };
-  const step = { do: async (_, fn) => fn(), sleep: async () => {} };
+  const step = { do: async (_, ...args) => args.at(-1)(), sleep: async () => {} };
   await new ApartmentScan({}, env).run({ payload: { runId: 'run-123' } }, step);
   assert.equal(sql.prepare('SELECT value FROM meta WHERE key=?').get(cursorKey('456')), undefined);
   await new ApartmentScan({}, env).run({ payload: { runId: 'run-456' } }, step);
@@ -116,4 +116,43 @@ test('one users sent listing and cursor do not suppress another users delivery',
   assert.equal(sql.prepare('SELECT count(*) AS n FROM user_sent WHERE key=?').get(item.key).n, 2);
   assert.equal(sql.prepare('SELECT count(*) AS n FROM locks').get().n, 0);
   assert.equal(scope(env, '123').TELEGRAM_CHAT_ID, '123');
+});
+
+test('a blocked source does not stop alerts, lose the window or repeat delivered listings on recovery', async t => {
+  const { DB, sql } = database(); t.after(() => sql.close());
+  let blocked = true;
+  const messages = [];
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    if (url.includes('api.telegram.org')) {
+      messages.push(JSON.parse(options.body));
+      return Response.json({ ok: true, result: {} });
+    }
+    if (url.includes('onliner.by')) return Response.json({ apartments: [], page: { last: 1 } });
+    if (url.includes('realt.by')) return blocked ? new Response('Forbidden', { status: 403 }) :
+      new Response('<script id="__NEXT_DATA__">' + JSON.stringify({ props: { pageProps: {
+        objects: [], pagination: { totalCount: 0 } } } }) + '</script>');
+    if (url.includes('api.kufar.by')) return Response.json({ ads: [{ ad_id: 123, ad_link: 'https://re.kufar.by/vi/123',
+      list_time: '2026-10-01T10:00:00Z', price_byn: 90000, price_usd: 30000,
+      ad_parameters: [{ p: 'coordinates', v: [27.55, 53.9] }, { p: 'region', vl: 'Минск' }, { p: 'rooms', v: '1' }],
+      account_parameters: [{ p: 'address', v: 'Минск' }] }], pagination: { pages: [] } });
+    throw Error('Unexpected URL');
+  });
+  const minsk = CITIES.findIndex(row => row[0] === 'Минск');
+  sql.prepare('INSERT INTO search_preferences VALUES (?,?)').run('123', JSON.stringify({ cities: [minsk], locationChosen: true }));
+  sql.prepare('INSERT INTO meta VALUES (?,?)').run(cursorKey('123'), '2026-10-01T09:00:00.000Z');
+  const env = { DB, TELEGRAM_CHAT_ID: '123', TELEGRAM_BOT_TOKEN: 'test' };
+  const step = { do: async (_, ...args) => args.at(-1)(), sleep: async () => {} };
+  const run = id => new ApartmentScan({}, env).run({ instanceId: id,
+    payload: { chatId: '123', kind: 'check', requestedAt: Date.parse('2026-10-01T11:00:00Z') } }, step);
+  const partial = await run('blocked-run');
+  assert.equal(partial.partial, true);
+  assert.ok(messages.some(m => m.text?.includes('Realt: доступ ограничен площадкой (HTTP 403)')));
+  assert.ok(messages.some(m => m.text?.includes('https://re.kufar.by/vi/123')));
+  assert.equal(sql.prepare('SELECT value FROM meta WHERE key=?').get(cursorKey('123')).value, '2026-10-01T09:00:00.000Z');
+  assert.equal(sql.prepare('SELECT count(*) AS n FROM locks').get().n, 0);
+  blocked = false;
+  const complete = await run('recovered-run');
+  assert.equal(complete.partial, false);
+  assert.equal(messages.filter(m => m.text?.includes('https://re.kufar.by/vi/123')).length, 1);
+  assert.equal(sql.prepare('SELECT value FROM meta WHERE key=?').get(cursorKey('123')).value, '2026-10-01T11:00:00.000Z');
 });
