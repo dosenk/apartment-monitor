@@ -5,7 +5,8 @@ import { LINES, STATIONS, preferences, toggleStation, toggleOnliner } from './me
 const AGENT = 'ApartmentMonitor/1.0 (personal rental alerts)';
 const SETTINGS_BUTTON = '⚙️ Настройки поиска';
 const OLD_SETTINGS_BUTTON = '⚙️ Настроить метро';
-const keyboard = { keyboard: [[{ text: BUTTON }], [{ text: SETTINGS_BUTTON }]],
+const HELP_BUTTON = 'ℹ️ Как пользоваться';
+const keyboard = { keyboard: [[{ text: BUTTON }], [{ text: SETTINGS_BUTTON }], [{ text: HELP_BUTTON }]],
   resize_keyboard: true, is_persistent: true };
 
 async function readActive(env) {
@@ -34,6 +35,15 @@ async function saveDraft(env, selected, awaiting = null) {
 
 function menu(screen, selected) {
   const pick = (label, data) => ({ text: label, callback_data: `prefs:${data}` });
+  if (screen === 'help') return {
+    text: 'ℹ️ Как пользоваться\n\n' +
+      '1. В «Настройках поиска» отметьте станции для Realt и Kufar и линии для Onliner. Можно выбрать несколько.\n' +
+      '2. При желании задайте максимальную цену в BYN и радиус в км. Число 0 убирает ограничение.\n' +
+      '3. Нажмите «Применить». После этого новые объявления придут по расписанию или по кнопке «Проверить новые квартиры». Настройки можно изменить позже.\n\n' +
+      '📏 Радиус: для Realt и Kufar — от выбранных станций; достаточно одной. Для Onliner — от ближайшей к квартире станции, если она на выбранной линии. Если метро не выбрано, радиус считается от площади Якуба Коласа. Без радиуса расстояние не ограничено. Исключение: «Возле метро» в Onliner означает до 1 км, если свой радиус не указан.\n\n' +
+      'Уже присланные объявления повторно не отправляются.',
+    inline_keyboard: [[pick('⚙️ К настройкам', 'home')]],
+  };
   if (screen.startsWith('stations:')) {
     const line = Number(screen.split(':')[1]);
     const title = LINES.find(x => x.id === line)?.name || LINES[0].name;
@@ -74,6 +84,7 @@ function menu(screen, selected) {
       [pick('🚇 Станции Realt + Kufar', 'stations:1')],
       [pick('🚇 Линии Onliner', 'onliner')],
       [pick('💰 Цена, BYN', 'input:price'), pick('📏 Радиус, км', 'input:radius')],
+      [pick(HELP_BUTTON, 'help')],
       [pick('✅ Применить', 'apply'), pick('Отмена', 'cancel')],
     ],
   };
@@ -294,6 +305,7 @@ export default {
           screen = 'onliner';
           await saveDraft(env, toggleOnliner(selected, action.split(':')[1]));
         } else if (action === 'onliner') screen = 'onliner';
+        else if (action === 'help') screen = 'help';
         else if (action === 'reset:stations' || action === 'reset:onliner') {
           const target = action.split(':')[1];
           await saveDraft(env, { ...selected, [target]: [] });
@@ -340,6 +352,10 @@ export default {
     if (String(update.message?.chat?.id) !== env.TELEGRAM_CHAT_ID) return Response.json({ ok: true });
     const draft = await env.DB.prepare('SELECT settings,awaiting FROM search_drafts WHERE chat_id=?')
       .bind(env.TELEGRAM_CHAT_ID).first();
+    if (update.message?.text === HELP_BUTTON || update.message?.text === '/help') {
+      await showMenu(env, 'help');
+      return Response.json({ ok: true });
+    }
     if (draft?.awaiting && ([SETTINGS_BUTTON, OLD_SETTINGS_BUTTON, '/cancel', '/start'].includes(update.message?.text))) {
       await saveDraft(env, preferences(JSON.parse(draft.settings)));
       await showMenu(env, 'home');
