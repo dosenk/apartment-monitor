@@ -1,0 +1,42 @@
+name: Deliver Telegram help button
+
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/deliver-help-button.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  deliver:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+    steps:
+      - name: Update reply keyboard
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import urllib.request
+
+          bot = os.environ['TELEGRAM_BOT_TOKEN']
+          payload = {
+              'chat_id': os.environ['TELEGRAM_CHAT_ID'],
+              'text': 'Добавил кнопку «ℹ️ Как пользоваться». Нажмите её, чтобы посмотреть краткую инструкцию по метро, радиусу и цене.',
+              'reply_markup': {'keyboard': [
+                  [{'text': '🔄 Проверить новые квартиры'}],
+                  [{'text': '⚙️ Настройки поиска'}],
+                  [{'text': 'ℹ️ Как пользоваться'}]],
+                  'resize_keyboard': True, 'is_persistent': True},
+          }
+          request = urllib.request.Request(f'https://api.telegram.org/bot{bot}/sendMessage',
+              data=json.dumps(payload).encode(), headers={'Content-Type': 'application/json'})
+          with urllib.request.urlopen(request, timeout=30) as response:
+              result = json.load(response)
+          assert result['ok'], result.get('description', 'Bot API failed')
+          print('Updated Telegram keyboard delivered')
+          PY
