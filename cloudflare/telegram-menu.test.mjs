@@ -13,7 +13,7 @@ test('fresh settings and legacy implicit Minsk do not expose city filters', () =
   for (const selected of [preferences({ cities: [] }), preferences(null)]) {
     const view = menu('home', selected);
     assert.ok(view.text.includes('Города: не выбраны'));
-    assert.deepEqual(labels(view), ['📍 Область', '🗺 Район области', '🏙 Город / населённый пункт',
+    assert.deepEqual(labels(view), ['📍 Область',
       '💰 Цена, BYN', '⏱ Частота проверки', 'ℹ️ Как пользоваться', '✅ Применить', 'Отмена']);
     assert.deepEqual(labels(menu('stations:1', selected)), labels(view));
   }
@@ -60,4 +60,15 @@ test('location pages stay inside Telegram message and callback limits', () => {
     assert.ok(view.inline_keyboard.length <= 100);
     for (const button of view.inline_keyboard.flat()) assert.ok(Buffer.byteLength(button.callback_data) <= 64);
   }
+});
+
+ test('root shows selected cities rather than the last browsed oblast and rayon', () => {
+  const selected = preferences({ cities: [minsk, brest], locationChosen: true,
+    browseOblast: 4, browseRayon: rayons('Минская').indexOf('Клецкий') });
+  const view = menu('home', selected);
+  assert.ok(view.text.includes('Города: Минск, Брест'));
+  assert.ok(!view.text.includes('Клецкий'));
+  assert.ok(!view.text.includes('Район области:'));
+  assert.equal(labels(view).filter(text => /Область|Район области|населённый пункт/.test(text)).length, 1);
+  assert.ok(labels(menu('oblast:0', selected)).some(text => text.includes('☑️ 🏙 Брест')));
 });
