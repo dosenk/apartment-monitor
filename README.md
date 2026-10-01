@@ -14,17 +14,18 @@ Each Telegram listing includes the first photo with address, monthly price, room
 
 Each completed check sends one heading with the exact Minsk-time publication period and the number of new listings (or that there were none), followed by the individual listings. The Cloudflare D1 `covered_until` cursor advances after all three sources succeed. A button press scans from the last completed boundary until now; the next scheduled check resumes from that point.
 
-A manual `--window current` run uses the evening interval ending at the current time (or at 22:00 if run later); when a saved boundary exists, it resumes from that boundary without repeating delivered IDs.
+## Search settings in Telegram
 
-## Configuration
+Send `/start` to the bot in your private chat. The persistent keyboard has **🔄 Проверить новые квартиры** and **⚙️ Настройки поиска**. Open settings to edit a draft:
 
-`PRICE_MAX_USD`: maximum monthly rent in US dollars. For another search, `PRICE_MAX_BYN` is also supported, and can be combined with the USD cap.
+- **🚇 Станции Realt + Kufar:** select one or several individual metro stations using the checkbox buttons. With none selected, these sites are not limited by metro.
+- **🚇 Линии Onliner:** select one or several of the three lines, or **Возле метро**. Onliner listing data has no station field in this integration, so the line is inferred from the closest station to the listing coordinates. **Возле метро** means within 1 km of the nearest station when no custom radius is set.
+- **💰 Цена, BYN:** reply with a monthly ceiling in Belarusian rubles. Enter `0` to remove the ceiling.
+- **📏 Радиус, км:** reply with a distance in kilometers. Enter `0` to leave it unset. If selected metro stations exist, the radius is measured from those stations; otherwise it is measured from Ploshcha Yakuba Kolasa. Onliner line selection uses the distance from the closest station.
 
-`ROOMS`: comma-separated numbers, e.g. `1,2`, or blank for any room count. The current search allows all counts.
+Press **✅ Применить** to save the draft for your chat. **Отмена** discards it. You can return to the menu at any time to change the settings. Until the first application, scheduled and manual checks wait without advancing the publication cursor. Once applied, both the button and the 09:00/14:00/22:00 scheduled checks use the saved settings. Already delivered listing IDs are not resent when filters change.
 
-`SEARCH_CENTER_LAT`, `SEARCH_CENTER_LON`, `SEARCH_RADIUS_KM`: center and straight-line radius. The current center is the metro station, approximately `53.915833, 27.583333`, with a radius of `3`. If a precise studio address is provided, replace the center coordinates. Alternatively, `AREA_POLYGON` accepts a JSON array of map corners in `[longitude,latitude]` order. Apartments without coordinates are skipped.
-
-`TELEGRAM_BOT_TOKEN`: secret from BotFather. `TELEGRAM_CHAT_ID`: the numeric ID of your own private chat after you send `/start` to the bot; this differs from the bot's own ID. If your bot manager shows a list of registered users, you may find your Telegram user/chat ID there. Otherwise obtain it privately through the Telegram Bot API. Do not post the token publicly or commit it to GitHub. Send `/start` in the private chat with the bot. It displays a persistent one-button keyboard («🔄 Проверить новые квартиры») below the input field; pressing it scans from the last completed check and advances the next scheduled window. The keyboard is also attached to each interval heading. Telegram does not support reply keyboards in broadcast channels.
+`TELEGRAM_BOT_TOKEN` is the BotFather secret. `TELEGRAM_CHAT_ID` is the numeric ID of the chat allowed to configure and receive alerts; it differs from the bot ID. Keep both as repository Actions secrets, never commit them. Telegram's reply keyboard is available in a private chat with the bot, not a broadcast channel.
 
 ## Free Cloudflare deployment
 
@@ -42,4 +43,4 @@ Without Docker, install `requirements.txt`, export the same environment variable
 
 ## Operational limits
 
-All three sites use undocumented listing data formats that can change. A failed provider makes the job fail after completed sources are processed. Realt's default sort is not strictly by creation date, so the monitor scans all result pages (up to 100) on each run. Onlíner and Kufar sort by listing time and stop at older listings (up to 30 and 100 pages respectively). Site access can be rate limited or blocked from a particular host. An interruption between Telegram delivery and committing `state.json` can result in one duplicate. Apartments newly posted and removed between two checks cannot be found later.
+All three sites use undocumented listing data formats that can change. A failed provider makes the job fail after completed sources are processed. Realt's default sort is not strictly by creation date, so the monitor scans all result pages (up to 100) on each run. Onlíner and Kufar sort by listing time and stop at older listings (up to 30 and 100 pages respectively). Site access can be rate limited or blocked from a particular host. An interruption between Telegram delivery and recording an ID in D1 can result in one duplicate. Apartments newly posted and removed between two checks cannot be found later.
