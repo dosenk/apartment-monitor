@@ -3,7 +3,8 @@ import { BUTTON, interval, label, matches, onliner, realt, kufar, caption } from
 import { LINES, STATIONS, preferences, toggleStation, toggleOnliner } from './metro.mjs';
 
 const AGENT = 'ApartmentMonitor/1.0 (personal rental alerts)';
-const SETTINGS_BUTTON = '⚙️ Настроить метро';
+const SETTINGS_BUTTON = '⚙️ Настройки поиска';
+const OLD_SETTINGS_BUTTON = '⚙️ Настроить метро';
 const keyboard = { keyboard: [[{ text: BUTTON }], [{ text: SETTINGS_BUTTON }]],
   resize_keyboard: true, is_persistent: true };
 
@@ -338,7 +339,7 @@ export default {
     if (String(update.message?.chat?.id) !== env.TELEGRAM_CHAT_ID) return Response.json({ ok: true });
     const draft = await env.DB.prepare('SELECT settings,awaiting FROM search_drafts WHERE chat_id=?')
       .bind(env.TELEGRAM_CHAT_ID).first();
-    if (draft?.awaiting && (update.message?.text === SETTINGS_BUTTON || update.message?.text === '/cancel')) {
+    if (draft?.awaiting && ([SETTINGS_BUTTON, OLD_SETTINGS_BUTTON, '/cancel', '/start'].includes(update.message?.text))) {
       await saveDraft(env, preferences(JSON.parse(draft.settings)));
       await showMenu(env, 'home');
       return Response.json({ ok: true });
@@ -377,7 +378,7 @@ export default {
       await telegram(env, 'sendMessage', { chat_id: env.TELEGRAM_CHAT_ID,
         text: 'Проверяю новые квартиры…', reply_markup: keyboard });
       return Response.json({ ok: true, id: instance.id });
-    } else if (update.message?.text === SETTINGS_BUTTON || update.message?.text === '/settings') {
+    } else if ([SETTINGS_BUTTON, OLD_SETTINGS_BUTTON, '/settings'].includes(update.message?.text)) {
       await showMenu(env, 'home');
     }
     return Response.json({ ok: true });
