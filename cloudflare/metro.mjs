@@ -45,7 +45,7 @@ export const STATIONS = [
   ['Слуцкий Гостинец', 3, 53.84273, 27.53396],
 ];
 
-export const DEFAULT_PREFERENCES = Object.freeze({ stations: [], onliner: [] });
+export const DEFAULT_PREFERENCES = Object.freeze({ stations: [], onliner: [], maxByn: null, radiusKm: null });
 
 export function preferences(value) {
   const stations = Array.isArray(value?.stations) ? value.stations : [];
@@ -53,6 +53,8 @@ export function preferences(value) {
   return {
     stations: [...new Set(stations.filter(x => Number.isInteger(x) && x >= 0 && x < STATIONS.length))],
     onliner: [...new Set(onliner.filter(x => ['near', '1', '2', '3'].includes(x)))],
+    maxByn: Number.isFinite(value?.maxByn) && value.maxByn > 0 ? value.maxByn : null,
+    radiusKm: Number.isFinite(value?.radiusKm) && value.radiusKm > 0 ? value.radiusKm : null,
   };
 }
 
@@ -86,19 +88,26 @@ function canonical(name) {
     .replace('немаршанский сад', 'неморшанский сад');
 }
 
-export function matchesMetro(item, value, distanceKm, defaultCenter, radiusKm) {
+export function matchesMetro(item, value, distanceKm, defaultCenter) {
   const selected = preferences(value);
   const source = item.key?.split(':')[0];
-  let stations;
+  const radiusKm = selected.radiusKm;
+  const hasCoords = Number.isFinite(item.latitude) && Number.isFinite(item.longitude);
   if (source === 'onliner') {
-    if (!selected.onliner.length) stations = null;
-    else if (selected.onliner.includes('near')) stations = STATIONS;
-    else stations = STATIONS.filter(x => selected.onliner.includes(String(x[1])));
+    if (!selected.onliner.length) return radiusKm === null || (hasCoords &&
+      distanceKm(item.latitude, item.longitude, ...defaultCenter) <= radiusKm);
+    if (!hasCoords) return false;
+    const distances = STATIONS.map(station => distanceKm(item.latitude, item.longitude, station[2], station[3]));
+    const nearest = distances.indexOf(Math.min(...distances));
+    if (selected.onliner.includes('near')) return distances[nearest] <= (radiusKm ?? 1);
+    return selected.onliner.includes(String(STATIONS[nearest][1])) &&
+      (radiusKm === null || distances[nearest] <= radiusKm);
   } else if (source === 'realt' || source === 'kufar') {
-    if (!selected.stations.length) stations = null;
-    else stations = selected.stations.map(index => STATIONS[index]).filter(Boolean)
+    if (!selected.stations.length) return radiusKm === null || (hasCoords &&
+      distanceKm(item.latitude, item.longitude, ...defaultCenter) <= radiusKm);
+    const stations = selected.stations.map(index => STATIONS[index]).filter(Boolean)
       .filter(station => (item.metroNames || []).some(name => canonical(name) === canonical(station[0])));
+    return stations.some(station => radiusKm === null || (hasCoords &&
+      distanceKm(item.latitude, item.longitude, station[2], station[3]) <= radiusKm));
   } else return false;
-  if (stations === null) return distanceKm(item.latitude, item.longitude, ...defaultCenter) <= radiusKm;
-  return stations.some(station => distanceKm(item.latitude, item.longitude, station[2], station[3]) <= radiusKm);
 }
