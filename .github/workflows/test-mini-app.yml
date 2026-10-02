@@ -1,0 +1,26 @@
+name: Test Telegram Mini App
+on:
+  pull_request:
+    paths: ['cloudflare/**', '.github/scripts/mini_app_qa.cjs', '.github/workflows/test-mini-app.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --test cloudflare/*.test.mjs
+      - run: npm install --no-save playwright
+      - run: npx playwright install --with-deps chromium
+      - run: node .github/scripts/mini_app_qa.cjs
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: mini-app-screenshots
+          path: /tmp/mini-app-*.png
+          retention-days: 3
