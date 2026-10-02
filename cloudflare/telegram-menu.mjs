@@ -1,4 +1,3 @@
-import { BUTTON } from './logic.mjs';
 import { LINES, STATIONS, FREQUENCIES } from './metro.mjs';
 import { DISTRICTS, CITY_DISTRICTS } from './districts.mjs';
 import { CITIES } from './geography.mjs';
@@ -6,11 +5,12 @@ import { OBLASTS, rayons, cities, cityName, isMinskSelected, directCities } from
 
 export const SETTINGS_BUTTON = '⚙️ Настройки поиска';
 export const OLD_SETTINGS_BUTTON = '⚙️ Настроить метро';
-export const HELP_BUTTON = 'ℹ️ Как пользоваться';
-export const CURRENT_BUTTON = '📋 Текущие настройки';
+export const CHECK_BUTTON = '🔄 Проверить';
+export const HELP_BUTTON = 'ⓘ Помощь';
+export const CURRENT_BUTTON = '📋 Мой поиск';
 const FREQUENCY_LABELS = { scheduled: '09:00, 14:00, 22:00', '10m': 'каждые 10 минут',
   '30m': 'каждые 30 минут', '1h': 'каждый час', '4h': 'каждые 4 часа', '8h': 'каждые 8 часов' };
-export const keyboard = { keyboard: [[{ text: BUTTON }], [{ text: SETTINGS_BUTTON }, { text: CURRENT_BUTTON }], [{ text: HELP_BUTTON }]],
+export const keyboard = { keyboard: [[{ text: CHECK_BUTTON }, { text: CURRENT_BUTTON }, { text: HELP_BUTTON }]],
   resize_keyboard: true, is_persistent: true };
 
 export function menu(screen, selected) {
@@ -145,7 +145,7 @@ export function menu(screen, selected) {
         [pick('🚇 Линии Onliner', 'onliner')], [pick('🗺 Районы Минска', 'districts')]] : []),
       [pick('💰 Цена, BYN', 'input:price')],
       [pick('⏱ Частота проверки', 'frequency')],
-      [pick(HELP_BUTTON, 'help')],
+      [pick('ℹ️ Как пользоваться', 'help')],
       [pick('✅ Применить', 'apply'), pick('Отмена', 'cancel')],
     ],
   };
