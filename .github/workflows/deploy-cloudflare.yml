@@ -89,6 +89,35 @@ jobs:
           with urllib.request.urlopen(request, timeout=30) as response:
               result = json.load(response)
           assert result['ok'], result
+          menu_payload = {'menu_button': {'type': 'web_app', 'text': 'Настройки', 'web_app': {'url': url + '/app/'}}}
+          request = urllib.request.Request(f'https://api.telegram.org/bot{bot}/setChatMenuButton',
+              data=json.dumps(menu_payload).encode(), headers={'Content-Type': 'application/json'})
+          with urllib.request.urlopen(request, timeout=30) as response:
+              assert json.load(response)['ok']
+          ua = {'User-Agent': 'Mozilla/5.0 (compatible; ApartmentMonitor/1.0)'}
+          for path in ['/app/', '/app/app.js', '/app/style.css']:
+              with urllib.request.urlopen(urllib.request.Request(url + path, headers=ua), timeout=30) as response:
+                  assert response.status == 200
+                  assert len(response.read()) > 100
+          request = urllib.request.Request(url + '/api/session', data=b'{"initData":""}',
+              headers={**ua, 'Content-Type': 'application/json'})
+          try:
+              urllib.request.urlopen(request, timeout=30)
+              raise AssertionError('Unsigned Mini App request accepted')
+          except urllib.error.HTTPError as error:
+              assert error.code == 401
+          import hmac
+          import time
+          import urllib.parse
+          fields = {'auth_date': str(int(time.time())), 'user': json.dumps({'id': int(os.environ['TELEGRAM_CHAT_ID']), 'first_name': 'Owner'})}
+          secret = hmac.new(b'WebAppData', bot.encode(), hashlib.sha256).digest()
+          check = '\n'.join(k + '=' + fields[k] for k in sorted(fields))
+          fields['hash'] = hmac.new(secret, check.encode(), hashlib.sha256).hexdigest()
+          request = urllib.request.Request(url + '/api/session',
+              data=json.dumps({'initData': urllib.parse.urlencode(fields)}).encode(), headers={**ua, 'Content-Type': 'application/json'})
+          with urllib.request.urlopen(request, timeout=30) as response:
+              session = json.load(response)
+              assert 'catalog' in session and 'settings' in session
+          print('Mini App assets, signed owner session, password gate and Telegram menu verified')
           print('Worker health verified and Telegram webhook configured:', url)
           PY
-
