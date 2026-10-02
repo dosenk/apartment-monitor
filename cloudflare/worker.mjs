@@ -1,3 +1,4 @@
+import { miniApi } from './mini-app.mjs';
 import { WorkflowEntrypoint } from 'cloudflare:workers';
 import { telegram } from './telegram-api.mjs';
 import { access, scope, scanLock, cursorKey } from './access.mjs';
@@ -42,6 +43,11 @@ async function saveDraft(env, selected, awaiting = null) {
 }
 
 async function showMenu(env, screen, messageId) {
+  if (screen === 'home' && env.MINI_APP_URL) {
+    return telegram(env, 'sendMessage', { chat_id: env.TELEGRAM_CHAT_ID,
+      text: 'Настройте поиск в приложении: города, цену, метро и частоту проверки. Настройки сохраняются только для вас.',
+      reply_markup: { inline_keyboard: [[{ text: '🏠 Открыть настройки', web_app: { url: env.MINI_APP_URL } }]] } });
+  }
   const { selected } = await readDraft(env);
   const view = menu(screen, selected);
   const payload = { chat_id: env.TELEGRAM_CHAT_ID, text: view.text,
@@ -254,6 +260,8 @@ export default {
   async fetch(request, bindings) {
     let env = bindings;
     const url = new URL(request.url);
+    if (url.pathname.startsWith('/api/')) return miniApi(request, env);
+    if (url.pathname.startsWith('/app')) return env.ASSETS ? env.ASSETS.fetch(request) : new Response('Not found', { status: 404 });
     if (url.pathname === '/health' && request.method === 'GET') return Response.json({ ok: true, multi_user: true, login_ready: Boolean(env.BOT_ACCESS_PASSWORD) });
     if (url.pathname !== '/telegram' || request.method !== 'POST') return new Response('Not found', { status: 404 });
     if (request.headers.get('X-Telegram-Bot-Api-Secret-Token') !== env.WEBHOOK_SECRET?.trim()) return new Response('Forbidden', { status: 403 });
@@ -463,13 +471,13 @@ export default {
       const active = await readActive(env);
       await telegram(env, 'sendMessage', { chat_id: env.TELEGRAM_CHAT_ID,
         text: active ? 'Внизу чата доступны проверка квартир и настройка поиска.' :
-          'Задайте параметры поиска и нажмите «Применить». После этого заработают проверки по кнопке и расписанию.',
+          'Задайте параметры поиска и нажмите «Сохранить настройки». После этого заработают проверки по кнопке и расписанию.',
         reply_markup: keyboard });
       await showMenu(env, 'home');
     } else if (update.message?.text === BUTTON) {
       if (!(await readActive(env))) {
         await telegram(env, 'sendMessage', { chat_id: env.TELEGRAM_CHAT_ID,
-          text: 'Сначала настройте поиск и нажмите «Применить».', reply_markup: keyboard });
+          text: 'Сначала настройте поиск и нажмите «Сохранить настройки».', reply_markup: keyboard });
         await showMenu(env, 'home');
         return Response.json({ ok: true });
       }
