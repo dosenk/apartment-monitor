@@ -27,6 +27,8 @@ config = {
     'main': 'cloudflare/worker.mjs',
     'compatibility_date': '2026-09-30',
     'workers_dev': True,
+    'assets': {'directory': './cloudflare/public', 'binding': 'ASSETS'},
+    'vars': {'MINI_APP_URL': 'https://apartment-monitor-bot.' + api('/workers/subdomain')['subdomain'] + '.workers.dev/app/'},
     'd1_databases': [{'binding': 'DB', 'database_name': 'apartment-monitor-state', 'database_id': db['uuid']}],
     'triggers': {'crons': ['*/10 * * * *']},
     'workflows': [{'name': 'apartment-monitor-scan', 'binding': 'SCAN',
