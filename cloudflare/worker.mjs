@@ -8,7 +8,7 @@ import { STATIONS, preferences, toggleStation, toggleOnliner } from './metro.mjs
 import { DISTRICTS, CITY_DISTRICTS } from './districts.mjs';
 import { CITIES } from './geography.mjs';
 import { OBLASTS, rayons, isMinskSelected } from './location.mjs';
-import { SETTINGS_BUTTON, OLD_SETTINGS_BUTTON, HELP_BUTTON, CURRENT_BUTTON, keyboard, menu, settingsSummary } from './telegram-menu.mjs';
+import { SETTINGS_BUTTON, OLD_SETTINGS_BUTTON, CHECK_BUTTON, HELP_BUTTON, CURRENT_BUTTON, keyboard, menu, settingsSummary } from './telegram-menu.mjs';
 
 const AGENT = 'ApartmentMonitor/1.0 (personal rental alerts)';
 async function readActive(env) {
@@ -419,11 +419,11 @@ export default {
     if (String(update.message?.chat?.id) !== env.TELEGRAM_CHAT_ID) return Response.json({ ok: true });
     const draft = await env.DB.prepare('SELECT settings,awaiting FROM search_drafts WHERE chat_id=?')
       .bind(env.TELEGRAM_CHAT_ID).first();
-    if (update.message?.text === HELP_BUTTON || update.message?.text === '/help') {
+    if ([HELP_BUTTON, 'ℹ️ Как пользоваться', '/help'].includes(update.message?.text)) {
       await showMenu(env, 'help');
       return Response.json({ ok: true });
     }
-    if (update.message?.text === CURRENT_BUTTON || update.message?.text === '/current') {
+    if ([CURRENT_BUTTON, '📋 Текущие настройки', '/current'].includes(update.message?.text)) {
       await telegram(env, 'sendMessage', { chat_id: env.TELEGRAM_CHAT_ID,
         text: settingsSummary(await readActive(env)), reply_markup: keyboard });
       return Response.json({ ok: true });
@@ -474,7 +474,7 @@ export default {
           'Задайте параметры поиска и нажмите «Сохранить настройки». После этого заработают проверки по кнопке и расписанию.',
         reply_markup: keyboard });
       await showMenu(env, 'home');
-    } else if (update.message?.text === BUTTON) {
+    } else if ([BUTTON, CHECK_BUTTON].includes(update.message?.text)) {
       if (!(await readActive(env))) {
         await telegram(env, 'sendMessage', { chat_id: env.TELEGRAM_CHAT_ID,
           text: 'Сначала настройте поиск и нажмите «Сохранить настройки».', reply_markup: keyboard });
