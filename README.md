@@ -4,16 +4,12 @@
 
 The bot supports multiple users in private Telegram chats. New users enter the shared access password once before settings become available. The password is stored as the Cloudflare secret `BOT_ACCESS_PASSWORD` (set the matching GitHub Actions secret before deploying); it is case-sensitive. After five failed attempts, login is blocked for ten minutes. Each chat has its own preferences, draft, schedule, scan cursor and sent-listing history. The original owner is authorized during migration and retains existing data.
 
-The active bot is a Cloudflare Worker with a D1 database and Telegram webhook. Open
-**⚙️ Настройки поиска → 📍 Область → район → город** to select one or more places in Belarus. The settings root has only one location button; choosing a city returns to settings. Open **📍 Область** again to add or remove another city,
-then set an optional BYN price limit and check frequency. Minsk listings can additionally
-be filtered by metro station or line and Minsk city district. These controls appear
-only after an explicit Minsk selection. Radius is disabled, including previously saved
-radius values. Brest listings
-can also be filtered by its Leninsky and Moskovsky city districts. Those Minsk filters
-do not restrict other selected towns. With no city districts selected, the city district
-filter is absent. **✅ Применить** saves the draft. **📋 Текущие настройки** displays only
-the applied settings, and **🔄 Проверить новые квартиры** starts a check.
+The active bot uses a Cloudflare Worker, D1 database, Telegram webhook and a Mini App served as static assets from the same Worker. No separate bot, hosting account or API token is needed for another user: share the Telegram bot link, have them press /start and enter the shared password, then open **Настройки** in the chat menu.
+
+The Mini App lets each user select one or more places through **Добавить город → область → город or район → населённый пункт**, set an optional monthly BYN budget, and select the check frequency. Minsk metro and district filters appear only while Minsk is selected; Brest also has city districts. No city district selection means no district filter. Radius is disabled. Press **Сохранить настройки** to apply the search to manual checks and the schedule. **Проверить объявления** uses saved settings and sends results to the user's own private chat. The existing **📋 Текущие настройки** chat command also displays applied settings.
+
+Mini App API requests require Telegram-signed initData (HMAC-SHA256, maximum session age one hour) and an authorized private user. Client-provided chat IDs are never used as recipients. Settings and sent history remain separate per user; existing data is retained. Closing and reopening the Mini App renews an expired session. Opening the app outside Telegram shows instructions rather than private settings.
+
 City district geometry: © OpenStreetMap contributors, ODbL.
 
 The location choices are served immediately by the Worker from a bundled open
