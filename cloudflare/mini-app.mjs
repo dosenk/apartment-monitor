@@ -2,7 +2,7 @@ import { preferences, STATIONS, LINES, FREQUENCIES } from './metro.mjs';
 import { CITIES } from './geography.mjs';
 import { OBLASTS, rayons, cities, directCities } from './location.mjs';
 import { DISTRICTS, CITY_DISTRICTS } from './districts.mjs';
-import { scanLock } from './access.mjs';
+import { scanLock, schedulePaused } from './access.mjs';
 
 const encoder = new TextEncoder();
 const json = (body, status = 200) => Response.json(body, { status, headers: { 'Cache-Control': 'no-store' } });
@@ -55,7 +55,7 @@ export async function miniApi(request, env) {
     if (path === '/api/session') {
       const row = await env.DB.prepare('SELECT settings FROM search_preferences WHERE chat_id=?').bind(chatId).first();
       const selected = preferences(row ? JSON.parse(row.settings) : { cities: [] });
-      return json({ user: { firstName: user.first_name || '' }, configured: Boolean(row), settings: selected,
+      return json({ user: { firstName: user.first_name || '' }, configured: Boolean(row), paused: await schedulePaused(env, chatId), settings: selected,
         places: selected.cities.map(index => place({ index, row: CITIES[index] })),
         catalog: { oblasts: OBLASTS, lines: LINES, stations: STATIONS.map(([name, line], id) => ({ id, name, line })),
           districts: DISTRICTS, cityDistricts: CITY_DISTRICTS, frequencies: FREQUENCIES } });
@@ -76,7 +76,7 @@ export async function miniApi(request, env) {
         env.DB.prepare('INSERT INTO search_preferences(chat_id,settings) VALUES (?,?) ON CONFLICT(chat_id) DO UPDATE SET settings=excluded.settings').bind(chatId, JSON.stringify(selected)),
         env.DB.prepare('DELETE FROM search_drafts WHERE chat_id=?').bind(chatId),
       ]);
-      return json({ ok: true, settings: selected });
+      return json({ ok: true, settings: selected, paused: await schedulePaused(env, chatId) });
     }
     if (path === '/api/check') {
       const row = await env.DB.prepare('SELECT settings FROM search_preferences WHERE chat_id=?').bind(chatId).first();

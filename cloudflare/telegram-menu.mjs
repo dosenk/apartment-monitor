@@ -5,13 +5,17 @@ import { OBLASTS, rayons, cities, cityName, isMinskSelected, directCities } from
 
 export const SETTINGS_BUTTON = '⚙️ Настройки поиска';
 export const OLD_SETTINGS_BUTTON = '⚙️ Настроить метро';
+export const PAUSE_BUTTON = '⏸ Пауза';
+export const RESUME_BUTTON = '▶️ Продолжить';
 export const CHECK_BUTTON = '🔄 Проверить';
 export const HELP_BUTTON = 'ⓘ Помощь';
 export const CURRENT_BUTTON = '📋 Мой поиск';
 const FREQUENCY_LABELS = { scheduled: '09:00, 14:00, 22:00', '10m': 'каждые 10 минут',
   '30m': 'каждые 30 минут', '1h': 'каждый час', '4h': 'каждые 4 часа', '8h': 'каждые 8 часов' };
-export const keyboard = { keyboard: [[{ text: CHECK_BUTTON }, { text: CURRENT_BUTTON }, { text: HELP_BUTTON }]],
-  resize_keyboard: true, is_persistent: true };
+export const keyboardFor = paused => ({ keyboard: [[{ text: CHECK_BUTTON }, { text: CURRENT_BUTTON },
+  { text: HELP_BUTTON }, { text: paused ? RESUME_BUTTON : PAUSE_BUTTON }]],
+  resize_keyboard: true, is_persistent: true });
+export const keyboard = keyboardFor(false);
 
 export function menu(screen, selected) {
   if (!selected.locationChosen) selected = { ...selected, cities: [] };

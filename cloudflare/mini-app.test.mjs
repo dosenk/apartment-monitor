@@ -33,7 +33,12 @@ test('Mini App settings and manual checks use only the authenticated user; passw
   sql.prepare('INSERT INTO bot_users(chat_id,authorized) VALUES (?,1)').run('456');
   const prefs = { cities: [DEFAULT_CITY], stations: [], onliner: [], districts: [], cityDistricts: {}, maxByn: 1000, frequency: '30m' };
   assert.equal((await request('check', 123)).status, 400);
-  assert.equal((await request('preferences',123,{ settings:prefs, chatId:'456' })).status,200);
+  sql.prepare('INSERT INTO meta VALUES (?,?)').run('schedule_paused:123','1');
+  const saved = await request('preferences',123,{ settings:prefs, chatId:'456' });
+  assert.equal(saved.status,200);
+  assert.equal((await saved.json()).paused,true);
+  assert.equal((await (await request('session',123)).json()).paused,true);
+  assert.equal((await (await request('session',456)).json()).paused,false);
   assert.equal(sql.prepare('SELECT settings FROM search_preferences WHERE chat_id=?').get('456'), undefined);
   assert.equal((await (await request('session',456)).json()).configured,false);
   assert.equal((await request('preferences',456,{ settings:{...prefs,maxByn:2000} })).status,200);

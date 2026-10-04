@@ -156,3 +156,53 @@ test('a blocked source does not stop alerts, lose the window or repeat delivered
   assert.equal(messages.filter(m => m.text?.includes('https://re.kufar.by/vi/123')).length, 1);
   assert.equal(sql.prepare('SELECT value FROM meta WHERE key=?').get(cursorKey('123')).value, '2026-10-01T11:00:00.000Z');
 });
+
+test('pause is per-user, persists independently of settings, and preserves manual checks and resume', async t => {
+  const { DB, sql } = database(); t.after(() => sql.close()); const messages = telegramMock(t), scans = [];
+  const env = { DB, TELEGRAM_CHAT_ID: '999', TELEGRAM_BOT_TOKEN: 'test', WEBHOOK_SECRET: 'secret', SCAN: { create: async options => { scans.push(options.params); return { id: 'test' }; } } };
+  const minsk = CITIES.findIndex(row => row[0] === 'Минск');
+  for (const chatId of ['123', '456']) {
+    sql.prepare('INSERT INTO bot_users(chat_id,authorized) VALUES (?,1)').run(chatId);
+    sql.prepare('INSERT INTO search_preferences VALUES (?,?)').run(chatId, JSON.stringify({ cities: [minsk], locationChosen: true, frequency: '30m' }));
+  }
+  await post(env, message(123, '⏸ Пауза'));
+  assert.equal(sql.prepare('SELECT value FROM meta WHERE key=?').get('schedule_paused:123').value, '1');
+  assert.ok(messages.at(-1).reply_markup.keyboard.flat().some(b=>b.text==='▶️ Продолжить'));
+  let job;
+  const tick = async () => { await worker.scheduled({cron:'*/10 * * * *',scheduledTime:Date.parse('2026-10-04T05:00:00Z')},env,{waitUntil:p=>job=p}); await job; };
+  await tick(); assert.deepEqual(scans.map(x=>x.chatId),['456']);
+  await post(env, message(123, '🔄 Проверить')); assert.equal(scans.at(-1).chatId,'123'); assert.equal(scans.at(-1).kind,'check');
+  await post(env, message(123, '📋 Мой поиск')); assert.match(messages.at(-1).text,/на паузе/);
+  await post(env, message(123, '▶️ Продолжить')); assert.ok(messages.at(-1).reply_markup.keyboard.flat().some(b=>b.text==='⏸ Пауза'));
+  scans.length=0; await tick(); assert.deepEqual(scans.map(x=>x.chatId),['123','456']);
+});
+
+test('pausing an automatic delivery stops remaining alerts, keeps its cursor, and releases the lock', async t => {
+  const {DB,sql}=database();t.after(()=>sql.close());const messages=telegramMock(t);
+  const chatId='123', runId='automatic', item={key:'kufar:pending',publishedAt:'2026-10-04T10:00:00Z',address:'Минск',rooms:1,priceByn:900,url:'https://re.kufar.by/vi/123'};
+  sql.prepare('INSERT INTO scan_runs VALUES (?,?,?,?,?,?,?)').run(runId,'2026-10-04T09:00:00Z','2026-10-04T11:00:00Z','send',1,null,1);
+  sql.prepare('INSERT INTO scan_recipients VALUES (?,?)').run(runId,chatId);
+  sql.prepare('INSERT INTO meta VALUES (?,?)').run(`automatic_scan:${runId}`,'1');
+  sql.prepare('INSERT INTO meta VALUES (?,?)').run(cursorKey(chatId),'2026-10-04T09:00:00Z');
+  sql.prepare('INSERT INTO locks VALUES (?,?,?)').run(scanLock(chatId),runId,Date.now()+600000);
+  sql.prepare('INSERT INTO pending VALUES (?,?,?,?)').run(runId,item.key,item.publishedAt,JSON.stringify(item));
+  const step={do:async(_, ...args)=>args.at(-1)(),sleep:async()=>{sql.prepare('INSERT OR REPLACE INTO meta VALUES (?,?)').run('schedule_paused:123','1');}};
+  const result=await new ApartmentScan({}, {DB,TELEGRAM_BOT_TOKEN:'test'}).run({payload:{runId}},step);
+  assert.equal(result.paused,true); assert.equal(messages.length,0);
+  assert.equal(sql.prepare('SELECT value FROM meta WHERE key=?').get(cursorKey(chatId)).value,'2026-10-04T09:00:00Z');
+  assert.equal(sql.prepare('SELECT count(*) AS n FROM user_sent').get().n,0);
+  for(const table of ['locks','pending','scan_runs']) assert.equal(sql.prepare(`SELECT count(*) AS n FROM ${table}`).get().n,0);
+  assert.equal(sql.prepare('SELECT value FROM meta WHERE key=?').get(`automatic_scan:${runId}`),undefined);
+});
+
+test('manual scan continuation still delivers while the schedule is paused', async t => {
+  const {DB,sql}=database();t.after(()=>sql.close());const messages=telegramMock(t),runId='manual',chatId='123';
+  sql.prepare('INSERT INTO scan_runs VALUES (?,?,?,?,?,?,?)').run(runId,'2026-10-04T09:00:00Z','2026-10-04T11:00:00Z','send',1,null,0);
+  sql.prepare('INSERT INTO scan_recipients VALUES (?,?)').run(runId,chatId);
+  sql.prepare('INSERT INTO locks VALUES (?,?,?)').run(scanLock(chatId),runId,Date.now()+600000);
+  sql.prepare('INSERT INTO meta VALUES (?,?)').run(`automatic_scan:${runId}`,'0');
+  sql.prepare('INSERT INTO meta VALUES (?,?)').run('schedule_paused:123','1');
+  const result=await new ApartmentScan({}, {DB,TELEGRAM_BOT_TOKEN:'test'}).run({payload:{runId}}, {do:async(_, ...args)=>args.at(-1)(),sleep:async()=>{}});
+  assert.equal(result.delivered,true); assert.equal(messages.length,1);
+  assert.ok(messages[0].reply_markup.keyboard.flat().some(b=>b.text==='▶️ Продолжить'));
+});

@@ -4,6 +4,15 @@ export const scope = (env, chatId) => ({ ...env, TELEGRAM_CHAT_ID: String(chatId
 export const scanLock = chatId => `scan:${chatId}`;
 export const cursorKey = chatId => `covered_until:${chatId}`;
 
+export const pauseKey = chatId => `schedule_paused:${chatId}`;
+export async function schedulePaused(env, chatId = env.TELEGRAM_CHAT_ID) {
+  return (await env.DB.prepare('SELECT value FROM meta WHERE key=?').bind(pauseKey(chatId)).first())?.value === '1';
+}
+export async function setSchedulePaused(env, paused) {
+  await env.DB.prepare(`INSERT INTO meta(key,value) VALUES (?,?)
+    ON CONFLICT(key) DO UPDATE SET value=excluded.value`).bind(pauseKey(env.TELEGRAM_CHAT_ID), paused ? '1' : '0').run();
+}
+
 async function samePassword(input, expected) {
   const digest = async value => new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value)));
   const [a, b] = await Promise.all([digest(input), digest(expected)]);
