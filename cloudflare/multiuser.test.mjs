@@ -206,3 +206,18 @@ test('manual scan continuation still delivers while the schedule is paused', asy
   assert.equal(result.delivered,true); assert.equal(messages.length,1);
   assert.ok(messages[0].reply_markup.keyboard.flat().some(b=>b.text==='▶️ Продолжить'));
 });
+
+test('manual-only settings exclude cron and queued automatic scans while retaining button checks', async t => {
+  const {DB,sql}=database();t.after(()=>sql.close());telegramMock(t);const scans=[];
+  const env={DB,TELEGRAM_CHAT_ID:'999',TELEGRAM_BOT_TOKEN:'test',WEBHOOK_SECRET:'secret',SCAN:{create:async options=>{scans.push(options.params);return {id:'test'};}}};
+  const minsk=CITIES.findIndex(row=>row[0]==='Минск');
+  for (const [id,frequency] of [['123','manual'],['456','10m']]) {
+    sql.prepare('INSERT INTO bot_users(chat_id,authorized) VALUES (?,1)').run(id);
+    sql.prepare('INSERT INTO search_preferences VALUES (?,?)').run(id,JSON.stringify({cities:[minsk],locationChosen:true,frequency}));
+  }
+  let job;await worker.scheduled({cron:'*/10 * * * *',scheduledTime:Date.parse('2026-10-04T06:00:00Z')},env,{waitUntil:p=>job=p});await job;
+  assert.deepEqual(scans.map(x=>x.chatId),['456']);assert.equal(scans[0].automatic,true);
+  await post(env,message(123,'🔄 Проверить'));assert.equal(scans.at(-1).chatId,'123');assert.equal(scans.at(-1).kind,'check');
+  const result=await new ApartmentScan({},env).run({instanceId:'queued',payload:{chatId:'123',kind:'check',automatic:true,requestedAt:Date.now()}}, {do:async(_, ...args)=>args.at(-1)(),sleep:async()=>{}});
+  assert.equal(result.paused,true);assert.equal(sql.prepare('SELECT count(*) AS n FROM scan_runs').get().n,0);
+});
