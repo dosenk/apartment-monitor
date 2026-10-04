@@ -49,7 +49,7 @@ import { DISTRICTS, CITY_DISTRICTS } from './districts.mjs';
 import { CITIES, CANONICAL_CITY } from './geography.mjs';
 import { DEFAULT_CITY, OBLASTS, rayons } from './location.mjs';
 
-export const FREQUENCIES = ['scheduled', '10m', '30m', '1h', '4h', '8h'];
+export const FREQUENCIES = ['manual', 'scheduled', '10m', '30m', '1h', '4h', '8h'];
 export const DEFAULT_PREFERENCES = Object.freeze({ cities: [DEFAULT_CITY], stations: [], onliner: [], districts: [],
   cityDistricts: {}, maxByn: null, radiusKm: null, frequency: 'scheduled' });
 
