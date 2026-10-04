@@ -3,7 +3,7 @@ const tg = window.Telegram?.WebApp;
 let settings, catalog, saved, configured = false, busy = false, paused = false;
 const places = new Map();
 let step = 'oblast', oblast, rayon, offset = 0, query = '', generation = 0, debounce;
-const frequencyLabels = { scheduled: '09:00, 14:00, 22:00', '10m': '10 минут', '30m': '30 минут', '1h': '1 час', '4h': '4 часа', '8h': '8 часов' };
+const frequencyLabels = { manual: 'только по кнопке', scheduled: '09:00, 14:00, 22:00', '10m': '10 минут', '30m': '30 минут', '1h': '1 час', '4h': '4 часа', '8h': '8 часов' };
 function status(text = '', error = false) { $('status').textContent = text; $('status').classList.toggle('error', error); }
 async function api(path, data = {}) {
   const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 20000);
@@ -104,7 +104,7 @@ $('price').oninput = () => { settings.maxByn = $('price').value === '' ? null : 
 $('frequency').onchange = () => { settings.frequency = $('frequency').value; refresh(); };
 $('form').onsubmit = async e => {
   e.preventDefault(); if (busy || !dirty()) return; busy = true; refresh(); status('Сохраняем…');
-  try { const result = await api('preferences', { settings }); settings = result.settings; saved = JSON.stringify(settings); configured = true; paused = result.paused === true; status(paused ? 'Настройки сохранены. Поиск по расписанию остаётся на паузе.' : 'Настройки сохранены. Поиск по расписанию включён.'); tg?.HapticFeedback?.notificationOccurred('success'); }
+  try { const result = await api('preferences', { settings }); settings = result.settings; saved = JSON.stringify(settings); configured = true; paused = result.paused === true; status(settings.frequency === 'manual' ? 'Настройки сохранены. Проверка только по кнопке, без расписания.' : paused ? 'Настройки сохранены. Поиск по расписанию остаётся на паузе.' : 'Настройки сохранены. Поиск по расписанию включён.'); tg?.HapticFeedback?.notificationOccurred('success'); }
   catch (error) { status(error.message, true); }
   finally { busy = false; filters(); refresh(); }
 };

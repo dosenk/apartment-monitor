@@ -100,9 +100,9 @@ export class ApartmentScan extends WorkflowEntrypoint {
     const modeKey = `automatic_scan:${runId}`;
     const initialKind = event.payload?.kind || ({ '0 6 * * *': 'morning', '0 11 * * *': 'midday', '0 19 * * *': 'evening' }[event.schedule?.cron]);
     const automatic = event.payload?.runId ?
-      (await env.DB.prepare('SELECT value FROM meta WHERE key=?').bind(modeKey).first())?.value !== '0' : initialKind !== 'check';
+      (await env.DB.prepare('SELECT value FROM meta WHERE key=?').bind(modeKey).first())?.value !== '0' : event.payload?.automatic === true || initialKind !== 'check';
     const shouldStop = async () => {
-      stopped = automatic && await schedulePaused(env);
+      stopped = automatic && (await schedulePaused(env) || (await readActive(env))?.frequency === 'manual');
       return stopped;
     };
     const nextInstance = async () => ({ id: (await env.SCAN.create({ params: { runId, chatId } })).id });
@@ -283,7 +283,7 @@ export default {
         if (!kind) continue;
         const lock = await env.DB.prepare('SELECT expires FROM locks WHERE name=?').bind(scanLock(user.chat_id)).first();
         if (lock && lock.expires > Date.now()) continue;
-        await env.SCAN.create({ params: { chatId: user.chat_id, kind, requestedAt: controller.scheduledTime } });
+        await env.SCAN.create({ params: { chatId: user.chat_id, automatic: true, kind, requestedAt: controller.scheduledTime } });
       }
     })());
   },
@@ -383,7 +383,7 @@ export default {
           const name = DISTRICTS[Number(action.split(':')[1])];
           if (name) await saveDraft(env, { ...selected, districts: selected.districts.includes(name)
             ? selected.districts.filter(x => x !== name) : [...selected.districts, name] });
-        } else if (/^frequency:(scheduled|10m|30m|1h|4h|8h)$/.test(action)) {
+        } else if (/^frequency:(manual|scheduled|10m|30m|1h|4h|8h)$/.test(action)) {
           screen = 'frequency';
           await saveDraft(env, { ...selected, frequency: action.slice(10) });
         }
@@ -454,7 +454,7 @@ export default {
       await setSchedulePaused(env, paused);
       await telegram(env, 'sendMessage', { chat_id: env.TELEGRAM_CHAT_ID,
         text: paused ? '⏸ Поиск по расписанию приостановлен. Настройки сохранены. Ручная проверка доступна кнопкой «Проверить». Чтобы вернуть расписание, нажмите «Продолжить».' :
-          '▶️ Поиск по расписанию включён. Использую ваши сохранённые настройки.',
+          (await readActive(env))?.frequency === 'manual' ? 'Пауза снята. Выбран режим «Только по кнопке». Чтобы включить расписание, выберите частоту проверки в Mini App.' : '▶️ Поиск по расписанию включён. Использую ваши сохранённые настройки.',
         reply_markup: await chatKeyboard(env) });
       return Response.json({ ok: true });
     }
@@ -464,7 +464,7 @@ export default {
     }
     if ([CURRENT_BUTTON, '📋 Текущие настройки', '/current'].includes(update.message?.text)) {
       await telegram(env, 'sendMessage', { chat_id: env.TELEGRAM_CHAT_ID,
-        text: settingsSummary(await readActive(env)) + (await schedulePaused(env) ? '\n\n⏸ Поиск по расписанию на паузе.' : '\n\n▶️ Поиск по расписанию включён.'), reply_markup: await chatKeyboard(env) });
+        text: settingsSummary(await readActive(env)) + ((await readActive(env))?.frequency === 'manual' ? '\n\nПроверка только по кнопке. Расписание отключено.' : await schedulePaused(env) ? '\n\n⏸ Поиск по расписанию на паузе.' : '\n\n▶️ Поиск по расписанию включён.'), reply_markup: await chatKeyboard(env) });
       return Response.json({ ok: true });
     }
     if (draft?.awaiting && ([SETTINGS_BUTTON, OLD_SETTINGS_BUTTON, '/cancel', '/start'].includes(update.message?.text))) {
