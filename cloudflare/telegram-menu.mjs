@@ -10,7 +10,7 @@ export const RESUME_BUTTON = '▶️ Продолжить';
 export const CHECK_BUTTON = '🔄 Проверить';
 export const HELP_BUTTON = 'ⓘ Помощь';
 export const CURRENT_BUTTON = '📋 Мой поиск';
-const FREQUENCY_LABELS = { scheduled: '09:00, 14:00, 22:00', '10m': 'каждые 10 минут',
+const FREQUENCY_LABELS = { manual: 'только по кнопке', scheduled: '09:00, 14:00, 22:00', '10m': 'каждые 10 минут',
   '30m': 'каждые 30 минут', '1h': 'каждый час', '4h': 'каждые 4 часа', '8h': 'каждые 8 часов' };
 export const keyboardFor = paused => ({ keyboard: [[{ text: CHECK_BUTTON }, { text: CURRENT_BUTTON },
   { text: HELP_BUTTON }, { text: paused ? RESUME_BUTTON : PAUSE_BUTTON }]],
