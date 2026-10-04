@@ -138,3 +138,8 @@ test('three sources preserve direct links, first photo, USD price, and location'
     assert.ok(!matches(item, '2026-09-30T08:00:00Z', '2026-09-30T09:00:00Z'));
   }
 });
+
+test('manual-only frequency persists and never triggers a scheduled check', () => {
+  assert.equal(preferences({frequency:'manual'}).frequency,'manual');
+  for (let minute=0;minute<1440;minute+=10) assert.equal(dueScan('manual',Date.parse('2026-10-04T00:00:00Z')+minute*60000),null);
+});
