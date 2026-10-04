@@ -1,6 +1,6 @@
 const $ = id => document.getElementById(id);
 const tg = window.Telegram?.WebApp;
-let settings, catalog, saved, configured = false, busy = false;
+let settings, catalog, saved, configured = false, busy = false, paused = false;
 const places = new Map();
 let step = 'oblast', oblast, rayon, offset = 0, query = '', generation = 0, debounce;
 const frequencyLabels = { scheduled: '09:00, 14:00, 22:00', '10m': '10 минут', '30m': '30 минут', '1h': '1 час', '4h': '4 часа', '8h': '8 часов' };
@@ -37,7 +37,7 @@ function refresh() {
   }
   $('save').disabled = busy || !settings.cities.length || !dirty();
   $('check').disabled = busy || !configured || dirty();
-  $('save-hint').textContent = dirty() ? 'Изменения ещё не сохранены' : `Сохранено · проверка: ${frequencyLabels[settings.frequency]}`;
+  $('save-hint').textContent = dirty() ? 'Изменения ещё не сохранены' : paused ? 'Сохранено · расписание на паузе' : `Сохранено · проверка: ${frequencyLabels[settings.frequency]}`;
   if (dirty()) tg?.enableClosingConfirmation?.(); else tg?.disableClosingConfirmation?.();
 }
 function choices(container, options, selected, change) {
@@ -104,7 +104,7 @@ $('price').oninput = () => { settings.maxByn = $('price').value === '' ? null : 
 $('frequency').onchange = () => { settings.frequency = $('frequency').value; refresh(); };
 $('form').onsubmit = async e => {
   e.preventDefault(); if (busy || !dirty()) return; busy = true; refresh(); status('Сохраняем…');
-  try { const result = await api('preferences', { settings }); settings = result.settings; saved = JSON.stringify(settings); configured = true; status('Настройки сохранены. Поиск по расписанию включён.'); tg?.HapticFeedback?.notificationOccurred('success'); }
+  try { const result = await api('preferences', { settings }); settings = result.settings; saved = JSON.stringify(settings); configured = true; paused = result.paused === true; status(paused ? 'Настройки сохранены. Поиск по расписанию остаётся на паузе.' : 'Настройки сохранены. Поиск по расписанию включён.'); tg?.HapticFeedback?.notificationOccurred('success'); }
   catch (error) { status(error.message, true); }
   finally { busy = false; filters(); refresh(); }
 };
@@ -119,7 +119,7 @@ async function init() {
   if (!tg?.initData) { status('Откройте из Telegram'); $('outside').hidden = false; return; }
   tg.ready(); tg.expand();
   try {
-    const session = await api('session'); settings = session.settings; catalog = session.catalog; configured = session.configured;
+    const session = await api('session'); settings = session.settings; catalog = session.catalog; configured = session.configured; paused = session.paused === true;
     session.places.forEach(p => places.set(p.id, p)); saved = configured ? JSON.stringify(settings) : '';
     $('welcome').textContent = `${session.user.firstName ? session.user.firstName + ', н' : 'Н'}астройте свой поиск. Новые объявления придут в ваш чат.`;
     $('price').value = settings.maxByn ?? ''; $('frequency').value = settings.frequency;
