@@ -59,6 +59,7 @@ export function matches(item, start, end, selected) {
 }
 
 export function dueScan(frequency, timestamp) {
+  if (frequency === 'manual') return null;
   const mins = { '10m': 10, '30m': 30, '1h': 60, '4h': 240, '8h': 480 }[frequency];
   const minsk = new Date(timestamp + MINSK_OFFSET);
   const hour = minsk.getUTCHours(), minute = minsk.getUTCMinutes();
