@@ -1,16 +1,18 @@
 import { miniApi } from './mini-app.mjs';
 import { WorkflowEntrypoint } from 'cloudflare:workers';
 import { telegram } from './telegram-api.mjs';
-import { access, scope, scanLock, cursorKey } from './access.mjs';
+import { access, scope, scanLock, cursorKey, schedulePaused, setSchedulePaused } from './access.mjs';
 import { sourceFailure, scanHeading } from './scan-errors.mjs';
 import { BUTTON, interval, label, matches, onliner, realt, kufar, caption, dueScan } from './logic.mjs';
 import { STATIONS, preferences, toggleStation, toggleOnliner } from './metro.mjs';
 import { DISTRICTS, CITY_DISTRICTS } from './districts.mjs';
 import { CITIES } from './geography.mjs';
 import { OBLASTS, rayons, isMinskSelected } from './location.mjs';
-import { SETTINGS_BUTTON, OLD_SETTINGS_BUTTON, CHECK_BUTTON, HELP_BUTTON, CURRENT_BUTTON, keyboard, menu, settingsSummary } from './telegram-menu.mjs';
+import { SETTINGS_BUTTON, OLD_SETTINGS_BUTTON, CHECK_BUTTON, HELP_BUTTON, CURRENT_BUTTON, PAUSE_BUTTON, RESUME_BUTTON, keyboardFor, menu, settingsSummary } from './telegram-menu.mjs';
 
 const AGENT = 'ApartmentMonitor/1.0 (personal rental alerts)';
+const chatKeyboard = async env => keyboardFor(await schedulePaused(env));
+
 async function readActive(env) {
   const row = await env.DB.prepare('SELECT settings FROM search_preferences WHERE chat_id=?')
     .bind(env.TELEGRAM_CHAT_ID).first();
@@ -94,14 +96,25 @@ export class ApartmentScan extends WorkflowEntrypoint {
     const chatId = event.payload?.chatId || (event.payload?.runId ?
       (await this.env.DB.prepare('SELECT chat_id FROM scan_recipients WHERE run_id=?').bind(runId).first())?.chat_id : null) || this.env.TELEGRAM_CHAT_ID;
     const env = scope(this.env, chatId);
-    let handoff = false;
+    let handoff = false, stopped = false;
+    const modeKey = `automatic_scan:${runId}`;
+    const initialKind = event.payload?.kind || ({ '0 6 * * *': 'morning', '0 11 * * *': 'midday', '0 19 * * *': 'evening' }[event.schedule?.cron]);
+    const automatic = event.payload?.runId ?
+      (await env.DB.prepare('SELECT value FROM meta WHERE key=?').bind(modeKey).first())?.value !== '0' : initialKind !== 'check';
+    const shouldStop = async () => {
+      stopped = automatic && await schedulePaused(env);
+      return stopped;
+    };
     const nextInstance = async () => ({ id: (await env.SCAN.create({ params: { runId, chatId } })).id });
     try {
+      if (await shouldStop()) return { paused: true };
       if (!event.payload?.runId) {
         const kind = event.payload?.kind || ({ '0 6 * * *': 'morning', '0 11 * * *': 'midday', '0 19 * * *': 'evening' }[event.schedule?.cron]);
         if (!kind) throw Error('Unknown scan type');
+        await step.do('save-scan-mode', () => env.DB.prepare('INSERT OR IGNORE INTO meta(key,value) VALUES (?,?)').bind(modeKey, automatic ? '1' : '0').run());
         let locked = false;
         for (let attempt = 0; attempt < 90; attempt++) {
+          if (await shouldStop()) return { paused: true };
           locked = await step.do(`acquire-${attempt}`, () => acquire(env, runId));
           if (locked) break;
           await step.sleep(`wait-${attempt}`, '20 seconds');
@@ -139,6 +152,7 @@ export class ApartmentScan extends WorkflowEntrypoint {
       onlinerParams.set('order', 'created_at:desc');
       let fetched = 0;
       while (state.stage !== 'send' && fetched < 15) {
+        if (await shouldStop()) return { paused: true };
         const source = state.stage, page = state.page;
         let url, parser;
         if (source === 'onliner') {
@@ -192,6 +206,7 @@ export class ApartmentScan extends WorkflowEntrypoint {
         state = { ...state, stage: next, page: nextPage, cursor: nextCursor };
         fetched++;
       }
+      if (await shouldStop()) return { paused: true };
       if (state.stage !== 'send') {
         const instance = await step.do('continue-pages', nextInstance);
         handoff = true;
@@ -204,10 +219,13 @@ export class ApartmentScan extends WorkflowEntrypoint {
       if (!state.header_sent) {
         const total = await step.do('count-pending', count);
         const heading = scanHeading(label(state.start, state.end), total, failures);
-        await step.do('send-header', async () => {
-          await telegram(env, 'sendMessage', { chat_id: env.TELEGRAM_CHAT_ID, text: heading, reply_markup: keyboard });
+        const headerSent = await step.do('send-header', async () => {
+          if (await shouldStop()) return false;
+          await telegram(env, 'sendMessage', { chat_id: env.TELEGRAM_CHAT_ID, text: heading, reply_markup: await chatKeyboard(env) });
           await env.DB.prepare('UPDATE scan_runs SET header_sent=1 WHERE id=?').bind(runId).run();
+          return true;
         });
+        if (!headerSent) return { paused: true };
       }
       const batch = await step.do('pending-batch', async () => (await env.DB.prepare(`SELECT p.item FROM pending p
         LEFT JOIN user_sent s ON s.key=p.key AND s.chat_id=? WHERE p.run_id=? AND s.key IS NULL
@@ -215,7 +233,12 @@ export class ApartmentScan extends WorkflowEntrypoint {
       for (const row of batch) {
         const item = JSON.parse(row.item);
         await step.sleep(`pace-${item.key}`, '2 seconds');
-        await step.do(`send-${item.key}`, () => sendListing(env, item));
+        const sent = await step.do(`send-${item.key}`, async () => {
+          if (await shouldStop()) return false;
+          await sendListing(env, item);
+          return true;
+        });
+        if (!sent) return { paused: true };
         await step.do(`save-${item.key}`, () => env.DB.prepare('INSERT OR IGNORE INTO user_sent(chat_id,key,sent_at) VALUES (?,?,?)')
           .bind(chatId, item.key, new Date().toISOString()).run());
       }
@@ -225,6 +248,7 @@ export class ApartmentScan extends WorkflowEntrypoint {
         handoff = true;
         return { continued: instance.id, remaining };
       }
+      if (await shouldStop()) return { paused: true };
       await step.do('finish', () => env.DB.batch([
         ...(!failures.length ? [env.DB.prepare(`INSERT INTO meta(key,value) VALUES (?,?)
           ON CONFLICT(key) DO UPDATE SET value=excluded.value`).bind(cursorKey(chatId), state.end)] :
@@ -237,6 +261,11 @@ export class ApartmentScan extends WorkflowEntrypoint {
       ]));
       return { bounds: { start: state.start, end: state.end }, delivered: true, partial: failures.length > 0 };
     } finally {
+      if (stopped) await step.do('discard-paused-run', () => env.DB.batch([
+        ...['pending', 'scan_preferences', 'scan_recipients', 'scan_errors'].map(table => env.DB.prepare(`DELETE FROM ${table} WHERE run_id=?`).bind(runId)),
+        env.DB.prepare('DELETE FROM scan_runs WHERE id=?').bind(runId),
+      ]));
+      if (!handoff) await step.do('clear-scan-mode', () => env.DB.prepare('DELETE FROM meta WHERE key=?').bind(modeKey).run());
       if (!handoff) await step.do('release-lock', () => env.DB.prepare("DELETE FROM locks WHERE name=? AND owner=?").bind(scanLock(chatId), runId).run());
     }
   }
@@ -248,6 +277,7 @@ export default {
       const users = (await env.DB.prepare(`SELECT p.chat_id,p.settings FROM search_preferences p
         JOIN bot_users u ON u.chat_id=p.chat_id WHERE u.authorized=1`).all()).results;
       for (const user of users) {
+        if (await schedulePaused(env, user.chat_id)) continue;
         const selected = preferences(JSON.parse(user.settings));
         const kind = dueScan(selected.frequency, controller.scheduledTime);
         if (!kind) continue;
@@ -273,7 +303,7 @@ export default {
     if (!(await access(env, update))) return Response.json({ ok: true });
     env = scope(env, chat.id);
     if (!wasAuthorized) {
-      await telegram(env, 'sendMessage', { chat_id: env.TELEGRAM_CHAT_ID, text: 'У каждого пользователя свои настройки и история объявлений.', reply_markup: keyboard });
+      await telegram(env, 'sendMessage', { chat_id: env.TELEGRAM_CHAT_ID, text: 'У каждого пользователя свои настройки и история объявлений.', reply_markup: await chatKeyboard(env) });
       await showMenu(env, 'home');
       return Response.json({ ok: true });
     }
@@ -402,7 +432,7 @@ export default {
           await telegram(env, 'editMessageText', { chat_id: env.TELEGRAM_CHAT_ID,
             message_id: callback.message.message_id, text: '✅ Настройки применены. Следующая проверка использует сохранённый выбор.' });
           await telegram(env, 'sendMessage', { chat_id: env.TELEGRAM_CHAT_ID,
-            text: 'Можете проверить новые объявления сейчас или изменить настройки позже.', reply_markup: keyboard });
+            text: 'Можете проверить новые объявления сейчас или изменить настройки позже.', reply_markup: await chatKeyboard(env) });
           return Response.json({ ok: true });
         } else if (action === 'cancel') {
           await env.DB.prepare('DELETE FROM search_drafts WHERE chat_id=?').bind(env.TELEGRAM_CHAT_ID).run();
@@ -419,13 +449,22 @@ export default {
     if (String(update.message?.chat?.id) !== env.TELEGRAM_CHAT_ID) return Response.json({ ok: true });
     const draft = await env.DB.prepare('SELECT settings,awaiting FROM search_drafts WHERE chat_id=?')
       .bind(env.TELEGRAM_CHAT_ID).first();
+    if ([PAUSE_BUTTON, RESUME_BUTTON, '/pause', '/resume'].includes(update.message?.text)) {
+      const paused = [PAUSE_BUTTON, '/pause'].includes(update.message.text);
+      await setSchedulePaused(env, paused);
+      await telegram(env, 'sendMessage', { chat_id: env.TELEGRAM_CHAT_ID,
+        text: paused ? '⏸ Поиск по расписанию приостановлен. Настройки сохранены. Ручная проверка доступна кнопкой «Проверить». Чтобы вернуть расписание, нажмите «Продолжить».' :
+          '▶️ Поиск по расписанию включён. Использую ваши сохранённые настройки.',
+        reply_markup: await chatKeyboard(env) });
+      return Response.json({ ok: true });
+    }
     if ([HELP_BUTTON, 'ℹ️ Как пользоваться', '/help'].includes(update.message?.text)) {
       await showMenu(env, 'help');
       return Response.json({ ok: true });
     }
     if ([CURRENT_BUTTON, '📋 Текущие настройки', '/current'].includes(update.message?.text)) {
       await telegram(env, 'sendMessage', { chat_id: env.TELEGRAM_CHAT_ID,
-        text: settingsSummary(await readActive(env)), reply_markup: keyboard });
+        text: settingsSummary(await readActive(env)) + (await schedulePaused(env) ? '\n\n⏸ Поиск по расписанию на паузе.' : '\n\n▶️ Поиск по расписанию включён.'), reply_markup: await chatKeyboard(env) });
       return Response.json({ ok: true });
     }
     if (draft?.awaiting && ([SETTINGS_BUTTON, OLD_SETTINGS_BUTTON, '/cancel', '/start'].includes(update.message?.text))) {
@@ -472,18 +511,18 @@ export default {
       await telegram(env, 'sendMessage', { chat_id: env.TELEGRAM_CHAT_ID,
         text: active ? 'Внизу чата доступны проверка квартир и настройка поиска.' :
           'Задайте параметры поиска и нажмите «Сохранить настройки». После этого заработают проверки по кнопке и расписанию.',
-        reply_markup: keyboard });
+        reply_markup: await chatKeyboard(env) });
       await showMenu(env, 'home');
     } else if ([BUTTON, CHECK_BUTTON].includes(update.message?.text)) {
       if (!(await readActive(env))) {
         await telegram(env, 'sendMessage', { chat_id: env.TELEGRAM_CHAT_ID,
-          text: 'Сначала настройте поиск и нажмите «Сохранить настройки».', reply_markup: keyboard });
+          text: 'Сначала настройте поиск и нажмите «Сохранить настройки».', reply_markup: await chatKeyboard(env) });
         await showMenu(env, 'home');
         return Response.json({ ok: true });
       }
       const instance = await env.SCAN.create({ params: { chatId: env.TELEGRAM_CHAT_ID, kind: 'check', requestedAt: Date.now() } });
       await telegram(env, 'sendMessage', { chat_id: env.TELEGRAM_CHAT_ID,
-        text: 'Проверяю новые квартиры…', reply_markup: keyboard });
+        text: 'Проверяю новые квартиры…', reply_markup: await chatKeyboard(env) });
       return Response.json({ ok: true, id: instance.id });
     } else if ([SETTINGS_BUTTON, OLD_SETTINGS_BUTTON, '/settings'].includes(update.message?.text)) {
       await showMenu(env, 'home');
