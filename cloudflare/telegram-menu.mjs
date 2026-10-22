@@ -127,18 +127,22 @@ export function menu(screen, selected) {
       ],
     };
   }
+  const commercial = selected.propertyType === 'commercial';
   const stationNames = selected.stations.map(i => STATIONS[i]?.[0]).filter(Boolean);
   const onlinerNames = selected.onliner.map(id => id === 'near' ? 'возле метро' : LINES.find(x => String(x.id) === id)?.name).filter(Boolean);
   const minsk = selected.locationChosen && isMinskSelected(selected);
   return {
     text: '⚙️ Настройки поиска · черновик\n' +
-      `Города: ${selected.cities.map(cityName).join(', ') || 'не выбраны'}\n` +
+      `Тип: ${commercial ? 'Коммерческая аренда' : 'Квартиры'}\n` +
+    `Источники: ${commercial ? 'Kufar, Realt' : 'Onliner, Kufar, Realt'}\n` +
+    `Города: ${selected.cities.map(cityName).join(', ') || 'не выбраны'}\n` +
       (selected.cities.some(i => cityName(i) === 'Брест') ?
         `Районы Бреста: ${selected.cityDistricts.Брест.join(', ') || 'фильтр не задан'}\n` : '') +
       (minsk ? `Realt + Kufar, метро: ${stationNames.join(', ') || 'фильтр не задан'}\n` +
-        `Onliner, метро: ${onlinerNames.join(', ') || 'фильтр не задан'}\n` +
+        (commercial ? '' : `Onliner, метро: ${onlinerNames.join(', ') || 'фильтр не задан'}\n`) +
         `Районы Минска: ${selected.districts.join(', ') || 'фильтр не задан'}\n` : '') +
-      `Цена: ${selected.maxByn ? `до ${selected.maxByn} BYN` : 'без ограничения'}\n` +
+      (commercial ? `Площадь: ${selected.areaMin ? 'от ' + selected.areaMin : ''}${selected.areaMax ? ' до ' + selected.areaMax : ''}${selected.areaMin || selected.areaMax ? ' м²' : 'без ограничения'}\n` +
+      `Отделка: ${{ any: 'любая', finished: 'с отделкой', unfinished: 'без отделки' }[selected.commercialFinish] || 'любая'}\n` : `Цена: ${selected.maxByn ? `до ${selected.maxByn} BYN` : 'без ограничения'}\n`) +
       `Проверка: ${FREQUENCY_LABELS[selected.frequency]}\n\n` +
       'Чтобы добавить или убрать город, нажмите «Область» и пройдите выбор местоположения. Сохраните изменения кнопкой «Применить». Уже отправленные объявления не повторяются.',
     inline_keyboard: [
@@ -157,17 +161,21 @@ export function menu(screen, selected) {
 
 export function settingsSummary(selected) {
   if (!selected) return '📋 Текущие настройки\nПоиск ещё не настроен.';
+  const commercial = selected.propertyType === 'commercial';
   const stationNames = selected.stations.map(i => STATIONS[i]?.[0]).filter(Boolean);
   const onlinerNames = selected.onliner.map(id => id === 'near' ? 'возле метро' :
     LINES.find(x => String(x.id) === id)?.name).filter(Boolean);
   const minsk = isMinskSelected(selected);
   return '📋 Текущие настройки поиска\n' +
+    `Тип: ${commercial ? 'Коммерческая аренда' : 'Квартиры'}\n` +
+    `Источники: ${commercial ? 'Kufar, Realt' : 'Onliner, Kufar, Realt'}\n` +
     `Города: ${selected.cities.map(cityName).join(', ')}\n` +
     (selected.cities.some(i => cityName(i) === 'Брест') ?
       `Районы Бреста: ${selected.cityDistricts.Брест.join(', ') || 'фильтр не задан'}\n` : '') +
     (minsk ? `Realt + Kufar, метро: ${stationNames.join(', ') || 'фильтр не задан'}\n` +
-      `Onliner, метро: ${onlinerNames.join(', ') || 'фильтр не задан'}\n` +
+      (commercial ? '' : `Onliner, метро: ${onlinerNames.join(', ') || 'фильтр не задан'}\n`) +
       `Районы Минска: ${selected.districts.join(', ') || 'фильтр не задан'}\n` : '') +
-    `Цена: ${selected.maxByn ? `до ${selected.maxByn} BYN` : 'без ограничения'}\n` +
+    (commercial ? `Площадь: ${selected.areaMin ? 'от ' + selected.areaMin : ''}${selected.areaMax ? ' до ' + selected.areaMax : ''}${selected.areaMin || selected.areaMax ? ' м²' : 'без ограничения'}\n` +
+      `Отделка: ${{ any: 'любая', finished: 'с отделкой', unfinished: 'без отделки' }[selected.commercialFinish] || 'любая'}\n` : `Цена: ${selected.maxByn ? `до ${selected.maxByn} BYN` : 'без ограничения'}\n`) +
     `Частота: ${FREQUENCY_LABELS[selected.frequency]}`;
 }

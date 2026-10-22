@@ -31,8 +31,14 @@ const place = ({ index, row }) => ({ id: index, name: row[0], type: row[3], obla
 export function checkedPreferences(value) {
   if (!value || !Array.isArray(value.cities) || !value.cities.length || value.cities.length > 50 ||
       value.cities.some(x => !Number.isInteger(x) || !CITIES[x])) throw fail('Выберите хотя бы один населённый пункт (не более 50).', 400);
+  if (value.propertyType != null && !['apartments', 'commercial'].includes(value.propertyType)) throw fail('Выберите тип недвижимости.', 400);
+  for (const field of ['areaMin', 'areaMax']) {
+    if (value[field] != null && (!Number.isFinite(value[field]) || value[field] <= 0 || value[field] > 1000000)) throw fail('Площадь должна быть от 0,01 до 1000000 м².', 400);
+  }
+  if (value.areaMin != null && value.areaMax != null && value.areaMin > value.areaMax) throw fail('Площадь «от» не должна превышать площадь «до».', 400);
+  if (value.commercialFinish != null && !['any', 'finished', 'unfinished'].includes(value.commercialFinish)) throw fail('Выберите вариант отделки.', 400);
   if (!FREQUENCIES.includes(value.frequency)) throw fail('Выберите частоту проверки.', 400);
-  if (value.maxByn !== null && (!Number.isFinite(value.maxByn) || value.maxByn <= 0 || value.maxByn > 100000)) throw fail('Цена должна быть от 0,01 до 100000 BYN или без ограничения.', 400);
+  if (value.propertyType !== 'commercial' && value.maxByn !== null && (!Number.isFinite(value.maxByn) || value.maxByn <= 0 || value.maxByn > 100000)) throw fail('Цена должна быть от 0,01 до 100000 BYN или без ограничения.', 400);
   for (const [name, choices] of [['stations', STATIONS.map((_, i) => i)], ['onliner', ['near', '1', '2', '3']], ['districts', DISTRICTS]]) {
     if (!Array.isArray(value[name]) || value[name].length > choices.length || value[name].some(x => !choices.includes(x))) throw fail('Неизвестный фильтр поиска.', 400);
   }

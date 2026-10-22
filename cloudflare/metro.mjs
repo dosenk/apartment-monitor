@@ -59,6 +59,10 @@ export function preferences(value) {
   const districts = Array.isArray(value?.districts) ? value.districts : [];
   const cities = Array.isArray(value?.cities) ? value.cities : [DEFAULT_CITY];
   return {
+    propertyType: value?.propertyType === 'commercial' ? 'commercial' : 'apartments',
+    areaMin: Number.isFinite(value?.areaMin) && value.areaMin > 0 ? value.areaMin : null,
+    areaMax: Number.isFinite(value?.areaMax) && value.areaMax > 0 ? value.areaMax : null,
+    commercialFinish: ['any', 'finished', 'unfinished'].includes(value?.commercialFinish) ? value.commercialFinish : 'any',
     cities: [...new Set(cities.filter(x => Number.isInteger(x) && x >= 0 && x < CITIES.length).map(x => CANONICAL_CITY[x]))],
     locationChosen: value?.locationChosen === true,
     browseOblast: Number.isInteger(value?.browseOblast) && OBLASTS[value.browseOblast] ? value.browseOblast : null,
@@ -71,7 +75,7 @@ export function preferences(value) {
     cityDistricts: Object.fromEntries(Object.entries(CITY_DISTRICTS).map(([city, available]) =>
       [city, [...new Set((Array.isArray(value?.cityDistricts?.[city]) ? value.cityDistricts[city] : [])
         .filter(name => available.includes(name)))]])),
-    maxByn: Number.isFinite(value?.maxByn) && value.maxByn > 0 ? value.maxByn : null,
+    maxByn: value?.propertyType !== 'commercial' && Number.isFinite(value?.maxByn) && value.maxByn > 0 ? value.maxByn : null,
     radiusKm: null,
     frequency: FREQUENCIES.includes(value?.frequency) ? value.frequency : 'scheduled',
   };

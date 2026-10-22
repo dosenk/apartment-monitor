@@ -10,6 +10,12 @@ The Mini App lets each user select one or more places through **Добавить
 
 Mini App API requests require Telegram-signed initData (HMAC-SHA256, maximum session age one hour) and an authorized private user. Client-provided chat IDs are never used as recipients. Settings and sent history remain separate per user; existing data is retained. Closing and reopening the Mini App renews an expired session. Opening the app outside Telegram shows instructions rather than private settings.
 
+### Commercial rental search
+
+Choose **Коммерческая — аренда** in the Mini App to search commercial rentals on Kufar and Realt only. Budget and Onliner controls are hidden; any saved apartment budget is ignored for commercial searches. Set optional minimum/maximum area in m² and finishing (default **Любая**), then save. City, district, metro, frequency, pause and manual checking work as before.
+
+Realt includes national office, shop, warehouse, flexible-use, services, production and restaurant/cafe feeds. Kufar uses rental category 1050. Area ranges match by intersection; missing area is excluded only when an area bound is set. Finishing uses source metadata: office finishing/good/normal for finished, pre-finishing/no finishing/construction finishing for unfinished. Repair-required and unspecified states remain visible under Any. Prices are informational and retain whole-object versus per-m² units; unavailable prices are shown as on request. Apartments and commercial searches keep independent scan cursors and shared per-user deduplication of listing IDs. Changing the property type stops delivery from an incompatible in-flight scan.
+
 City district geometry: © OpenStreetMap contributors, ODbL.
 
 The location choices are served immediately by the Worker from a bundled open

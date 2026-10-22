@@ -1,0 +1,43 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { commercialRealt, commercialKufar, commercialMatches, scanSources, commercialPrice } from './commercial.mjs';
+import { caption, matches } from './logic.mjs';
+import { preferences } from './metro.mjs';
+import { checkedPreferences } from './mini-app.mjs';
+import { DEFAULT_CITY } from './location.mjs';
+import { cursorKey } from './access.mjs';
+import { settingsSummary } from './telegram-menu.mjs';
+const html = (objects, pagination = {page:1,pageSize:120,totalCount:1216}) => '<a href="/grodno-region/rent-offices/object/42/">Object</a><script id="__NEXT_DATA__">' + JSON.stringify({props:{pageProps:{objects,pagination,firstPageSizeMultiplier:4}}}) + '</script>';
+const object = {code:42,areaMin:50,areaMax:200,repairState:7,priceCurrency:933,price:0,pricePerM2:40,priceRatesPerM2:{'840':12},townName:'Минск',streetName:'Сурганова',houseNumber:'1',createdAt:'2026-10-22T10:00:00Z',metroStationName:'Академия наук',location:[27.58,53.9]};
+const ad = {category:1050,type:'let',ad_id:24,ad_link:'https://re.kufar.by/vi/24',price_byn:'0',price_usd:'0',list_time:object.createdAt,ad_parameters:[{p:'size',v:80},{p:'region',vl:'Минск'},{p:'metro',vl:['Академия наук']},{p:'commercial_repair',v:'15'}]};
+test('commercial parsers preserve unknown prices, partial areas, original repair labels, metro and canonical URLs',()=>{
+  const batch=commercialRealt(html([object]));assert.equal(batch.lastPage,38);
+  const item=batch.items[0];assert.equal(item.url,'https://realt.by/grodno-region/rent-offices/object/42/');assert.equal(item.byn,null);assert.equal(item.pricePerM2Byn,40);assert.equal(item.finish,'unfinished');assert.deepEqual(item.metroNames,['Академия наук']);
+  assert.match(caption(item),/50–200 м²/);assert.match(caption(item),/40 BYN \/ \$12 за м²/);assert.doesNotMatch(caption(item),/комн\.|\$null|0 BYN в месяц/);
+  assert.equal(commercialRealt(html([{...object,code:43}]),'storages').items[0].url,'https://realt.by/rent-pomeschenie/object/43/');
+  assert.equal(commercialRealt(html([{...object,code:43}]),'production').items[0].url,'https://realt.by/rent-proizvodstvo/object/43/');
+  const k=commercialKufar({ads:[ad,{...ad,ad_id:25,category:1010}],pagination:{pages:[]}}).items;
+  assert.equal(k.length,1);assert.equal(k[0].finish,'unknown');assert.equal(k[0].finishLabel,'Требуется косметический ремонт');assert.equal(k[0].latitude,null);assert.match(caption(k[0]),/Цена по запросу/);
+});
+test('commercial ranges overlap, any finish includes unknown repair, apartment budgets and Onliner cannot leak in',()=>{
+ const selected=preferences({propertyType:'commercial',cities:[DEFAULT_CITY],maxByn:1,areaMin:70,areaMax:90});
+ const item=commercialRealt(html([object])).items[0];
+ assert.equal(selected.maxByn,null);assert.ok(commercialMatches(item,selected));
+ for (const bounds of [{areaMin:201},{areaMax:49}]) assert.equal(commercialMatches(item,preferences({...selected,...bounds})),false);
+ assert.equal(commercialMatches({...item,areaMin:null,areaMax:null},selected),false);
+ assert.ok(commercialMatches({...item,areaMin:null,areaMax:null},preferences({...selected,areaMin:null,areaMax:null})));
+ const start='2026-10-22T09:00:00Z',end='2026-10-22T11:00:00Z';
+ assert.ok(matches(item,start,end,selected));assert.equal(matches({...item,key:'onliner:42'},start,end,selected),false);
+ assert.equal(matches(item,start,end,preferences({cities:[DEFAULT_CITY]})),false);
+ const unknown={...item,finish:'unknown'};assert.ok(commercialMatches(unknown,selected));assert.equal(commercialMatches(unknown,{...selected,commercialFinish:'finished'}),false);
+ assert.deepEqual(scanSources(preferences(null)),['onliner','realt','kufar']);assert.ok(!scanSources(selected).includes('onliner'));assert.equal(scanSources(selected).length,8);
+ assert.notEqual(cursorKey('123'),cursorKey('123','commercial'));
+});
+test('commercial validation rejects invalid ranges, ignores budget, and summary reflects applicable filters',()=>{
+ const selected={cities:[DEFAULT_CITY],stations:[],onliner:[],districts:[],cityDistricts:{},frequency:'manual',propertyType:'commercial',areaMin:70,areaMax:90,commercialFinish:'any',maxByn:1};
+ const saved=checkedPreferences(selected);assert.equal(saved.maxByn,null);
+ const summary=settingsSummary(saved);assert.match(summary,/Коммерческая аренда/);assert.match(summary,/70.*90/);assert.match(summary,/Отделка: любая/);assert.doesNotMatch(summary,/Onliner|Цена:/);
+ for(const change of [{areaMin:-1},{areaMax:0},{areaMin:'70'},{areaMin:91},{propertyType:'unknown'},{commercialFinish:'unknown'}]) assert.throws(()=>checkedPreferences({...selected,...change}));
+ assert.equal(preferences({}).propertyType,'apartments');assert.equal(preferences({}).commercialFinish,'any');
+ assert.equal(commercialPrice({byn:null,usd:null}),'Цена по запросу');
+});
