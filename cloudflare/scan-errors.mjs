@@ -10,10 +10,10 @@ export function sourceFailure(error) {
   return 'ошибка получения данных';
 }
 
-export function scanHeading(period, total, failures) {
+export function scanHeading(period, total, failures, propertyType = 'apartments') {
   const names = { onliner: 'Onliner', realt: 'Realt', kufar: 'Kufar' };
-  return `🏠 Квартиры за период ${period}\n` +
+  return `${propertyType === 'commercial' ? '🏢 Коммерческая недвижимость' : '🏠 Квартиры'} за период ${period}\n` +
     (total ? `Новых объявлений: ${total}` : failures.length ? 'В доступных данных новых объявлений нет' : 'Новых объявлений нет') +
-    (failures.length ? '\n\n⚠️ Проверка неполная:\n' + failures.map(x => `${names[x.source] || 'Площадка'}: ${x.reason}`).join('\n') +
+    (failures.length ? '\n\n⚠️ Проверка неполная:\n' + failures.map(x => `${names[x.source] || (x.source?.startsWith('realt-') ? 'Realt (' + ({ offices: 'офисы', shops: 'торговые помещения', warehouses: 'склады', storages: 'свободные помещения', services: 'услуги', production: 'производство', 'restorant-cafe': 'общепит' }[x.source.slice(6)] || 'коммерция') + ')' : 'Площадка')}: ${x.reason}`).join('\n') +
       '\nПовторю проверку по расписанию. Период сохранён для повторной проверки; присланные объявления не повторятся.' : '');
 }

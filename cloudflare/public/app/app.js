@@ -18,6 +18,15 @@ async function api(path, data = {}) {
 }
 const dirty = () => JSON.stringify(settings) !== saved;
 function refresh() {
+  const commercial = settings.propertyType === 'commercial';
+  $('page-title').textContent = commercial ? 'Помещение для вашего дела.' : 'Квартира, которая вам подходит.';
+  $('budget').hidden = commercial;
+  $('price').disabled = commercial;
+  $('commercial-options').hidden = !commercial;
+  for (const id of ['area-min', 'area-max', 'finish']) $(id).disabled = !commercial;
+  $('onliner-filters').hidden = commercial;
+  $('sources').textContent = commercial ? 'Куфар · Realt · без ограничения бюджета' : 'Куфар · Realt · Onliner';
+
   $('chosen').replaceChildren();
   for (const id of settings.cities) {
     const p = places.get(id), button = document.createElement('button'); button.type = 'button'; button.className = 'chip';
@@ -100,6 +109,13 @@ $('close').onclick = closeLocations; $('locations').addEventListener('cancel', e
 $('back').onclick = back; tg?.BackButton?.onClick(back);
 $('more').onclick = () => { offset += 30; browse(true); };
 $('search').oninput = () => { clearTimeout(debounce); generation++; debounce = setTimeout(() => { query = $('search').value; offset = 0; browse(); }, 300); };
+$('property-type').onchange = () => {
+  settings.propertyType = $('property-type').value;
+  settings.maxByn = settings.propertyType === 'commercial' || $('price').value === '' ? null : Number($('price').value);
+  refresh();
+};
+for (const [id, field] of [['area-min', 'areaMin'], ['area-max', 'areaMax']]) $(id).oninput = () => { settings[field] = $(id).value === '' ? null : Number($(id).value); refresh(); };
+$('finish').onchange = () => { settings.commercialFinish = $('finish').value; refresh(); };
 $('price').oninput = () => { settings.maxByn = $('price').value === '' ? null : Number($('price').value); refresh(); };
 $('frequency').onchange = () => { settings.frequency = $('frequency').value; refresh(); };
 $('form').onsubmit = async e => {
@@ -122,6 +138,8 @@ async function init() {
     const session = await api('session'); settings = session.settings; catalog = session.catalog; configured = session.configured; paused = session.paused === true;
     session.places.forEach(p => places.set(p.id, p)); saved = configured ? JSON.stringify(settings) : '';
     $('welcome').textContent = `${session.user.firstName ? session.user.firstName + ', н' : 'Н'}астройте свой поиск. Новые объявления придут в ваш чат.`;
+    $('property-type').value = settings.propertyType || 'apartments';
+    $('area-min').value = settings.areaMin ?? ''; $('area-max').value = settings.areaMax ?? ''; $('finish').value = settings.commercialFinish || 'any';
     $('price').value = settings.maxByn ?? ''; $('frequency').value = settings.frequency;
     filters(); refresh(); $('form').hidden = false; status();
   } catch (error) { status(error.message, true); $('retry').hidden = false; }

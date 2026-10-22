@@ -1,3 +1,4 @@
+import { scanSources, commercialRealt, commercialKufar } from './commercial.mjs';
 import { miniApi } from './mini-app.mjs';
 import { WorkflowEntrypoint } from 'cloudflare:workers';
 import { telegram } from './telegram-api.mjs';
@@ -47,7 +48,7 @@ async function saveDraft(env, selected, awaiting = null) {
 async function showMenu(env, screen, messageId) {
   if (screen === 'home' && env.MINI_APP_URL) {
     return telegram(env, 'sendMessage', { chat_id: env.TELEGRAM_CHAT_ID,
-      text: 'Настройте поиск в приложении: города, цену, метро и частоту проверки. Настройки сохраняются только для вас.',
+      text: 'Настройте поиск в приложении: тип недвижимости, города, площадь, метро и частоту проверки. Настройки сохраняются только для вас.',
       reply_markup: { inline_keyboard: [[{ text: '🏠 Открыть настройки', web_app: { url: env.MINI_APP_URL } }]] } });
   }
   const { selected } = await readDraft(env);
@@ -58,7 +59,7 @@ async function showMenu(env, screen, messageId) {
   else await telegram(env, 'sendMessage', payload);
 }
 
-async function fetchPage(url, parser) {
+async function fetchPage(url, parser, isHtml = false) {
   const headers = new URL(url).hostname === 'api.kufar.by' ?
     { 'User-Agent': 'Mozilla/5.0 Chrome/131.0 Safari/537.36', Accept: 'application/json', Referer: 'https://re.kufar.by/' } :
     { 'User-Agent': AGENT, Accept: 'application/json,text/html' };
@@ -67,7 +68,7 @@ async function fetchPage(url, parser) {
     const detail = (await response.text()).replace(/\s+/g, ' ').slice(0, 240);
     throw Error(`Source HTTP ${response.status}: ${new URL(url).hostname}; server=${response.headers.get('server')}; type=${response.headers.get('content-type')}; detail=${detail}`);
   }
-  return parser(parser === realt ? await response.text() : await response.json());
+  return parser(isHtml || parser === realt ? await response.text() : await response.json());
 }
 
 
@@ -96,13 +97,15 @@ export class ApartmentScan extends WorkflowEntrypoint {
     const chatId = event.payload?.chatId || (event.payload?.runId ?
       (await this.env.DB.prepare('SELECT chat_id FROM scan_recipients WHERE run_id=?').bind(runId).first())?.chat_id : null) || this.env.TELEGRAM_CHAT_ID;
     const env = scope(this.env, chatId);
-    let handoff = false, stopped = false;
+    let handoff = false, stopped = false, runPropertyType = null;
     const modeKey = `automatic_scan:${runId}`;
     const initialKind = event.payload?.kind || ({ '0 6 * * *': 'morning', '0 11 * * *': 'midday', '0 19 * * *': 'evening' }[event.schedule?.cron]);
     const automatic = event.payload?.runId ?
       (await env.DB.prepare('SELECT value FROM meta WHERE key=?').bind(modeKey).first())?.value !== '0' : event.payload?.automatic === true || initialKind !== 'check';
     const shouldStop = async () => {
-      stopped = automatic && (await schedulePaused(env) || (await readActive(env))?.frequency === 'manual');
+      const active = await readActive(env);
+      stopped = (runPropertyType !== null && active && active.propertyType !== runPropertyType) ||
+        (automatic && (await schedulePaused(env) || active?.frequency === 'manual')); 
       return stopped;
     };
     const nextInstance = async () => ({ id: (await env.SCAN.create({ params: { runId, chatId } })).id });
@@ -122,14 +125,15 @@ export class ApartmentScan extends WorkflowEntrypoint {
         if (!locked) throw Error('Scan lock held too long');
         const selected = await step.do('read-settings', () => readActive(env));
         if (!selected) return { skipped: true, reason: 'search_not_configured' };
+        runPropertyType = selected.propertyType;
         const cursor = await step.do('read-cursor', async () =>
-          (await env.DB.prepare('SELECT value FROM meta WHERE key=?').bind(cursorKey(chatId)).first())?.value || null);
+          (await env.DB.prepare('SELECT value FROM meta WHERE key=?').bind(cursorKey(chatId, selected.propertyType)).first())?.value || null);
         const bounds = interval(kind, event.payload?.requestedAt || event.schedule?.scheduledTime || Date.now(), cursor);
         if (bounds.start >= bounds.end) return { skipped: true, bounds };
         await step.do('init-run', () => env.DB.batch([
           env.DB.prepare(`INSERT OR IGNORE INTO scan_runs
-            (id,start,end,stage,page,cursor,header_sent) VALUES (?,?,?,'onliner',1,NULL,0)`)
-            .bind(runId, bounds.start, bounds.end),
+            (id,start,end,stage,page,cursor,header_sent) VALUES (?,?,?,?,1,NULL,0)`)
+            .bind(runId, bounds.start, bounds.end, scanSources(selected)[0]),
           env.DB.prepare('INSERT OR IGNORE INTO scan_preferences(run_id,settings) VALUES (?,?)')
             .bind(runId, JSON.stringify(selected)),
           env.DB.prepare('INSERT OR IGNORE INTO scan_recipients(run_id,chat_id) VALUES (?,?)').bind(runId, chatId),
@@ -146,6 +150,9 @@ export class ApartmentScan extends WorkflowEntrypoint {
         const row = await env.DB.prepare('SELECT settings FROM scan_preferences WHERE run_id=?').bind(runId).first();
         return row ? preferences(JSON.parse(row.settings)) : preferences(null);
       });
+      runPropertyType = selected.propertyType;
+      const sources = scanSources(selected);
+      const nextSource = source => sources[sources.indexOf(source) + 1] || 'send';
       const cutoff = Date.parse(state.start);
       const onlinerParams = new URLSearchParams();
       for (const rooms of ['1_room', '2_rooms', '3_rooms', '4_rooms', '5_rooms', '6_rooms']) onlinerParams.append('rent_type[]', rooms);
@@ -154,26 +161,31 @@ export class ApartmentScan extends WorkflowEntrypoint {
       while (state.stage !== 'send' && fetched < 15) {
         if (await shouldStop()) return { paused: true };
         const source = state.stage, page = state.page;
-        let url, parser;
+        let url, parser, isHtml = false;
         if (source === 'onliner') {
           url = `https://ak.api.onliner.by/search/apartments?${onlinerParams}&page=${page}`;
           parser = onliner;
+        } else if (source.startsWith('realt-')) {
+          const slug = source.slice(6);
+          url = `https://realt.by/belarus/rent/${slug}/${page === 1 ? '' : `?page=${page}`}`;
+          parser = raw => commercialRealt(raw, slug);
+          isHtml = true;
         } else if (source === 'realt') {
           url = `https://realt.by/rent/flat-for-long/${page === 1 ? '' : `?page=${page}`}`;
           parser = realt;
         } else if (source === 'kufar') {
-          const params = new URLSearchParams({ cat: '1010', typ: 'let', size: '100', sort: 'lst.d', lang: 'ru' });
+          const params = new URLSearchParams({ cat: selected.propertyType === 'commercial' ? '1050' : '1010', typ: 'let', size: '100', sort: 'lst.d', lang: 'ru' });
           if (state.cursor) params.set('cursor', state.cursor);
           url = `https://api.kufar.by/search-api/v2/search/rendered-paginated?${params}`;
-          parser = kufar;
+          parser = selected.propertyType === 'commercial' ? commercialKufar : kufar;
         } else throw Error(`Unknown source ${source}`);
         let batch;
         try {
-          batch = await step.do(`fetch-${source}-${page}`, { retries: { limit: 2, delay: '10 seconds', backoff: 'exponential' }, timeout: '30 seconds' }, () => fetchPage(url, parser));
+          batch = await step.do(`fetch-${source}-${page}`, { retries: { limit: 2, delay: '10 seconds', backoff: 'exponential' }, timeout: '30 seconds' }, () => fetchPage(url, parser, isHtml));
         } catch (error) {
           const reason = sourceFailure(error);
           console.warn('Apartment source unavailable', source, reason);
-          const next = ({ onliner: 'realt', realt: 'kufar', kufar: 'send' })[source];
+          const next = nextSource(source);
           await step.do(`skip-unavailable-${source}-${page}`, () => env.DB.batch([
             env.DB.prepare('INSERT OR REPLACE INTO scan_errors(run_id,source,reason) VALUES (?,?,?)').bind(runId, source, reason),
             env.DB.prepare('UPDATE scan_runs SET stage=?,page=1,cursor=NULL WHERE id=?').bind(next, runId),
@@ -186,6 +198,7 @@ export class ApartmentScan extends WorkflowEntrypoint {
         const older = batch.items.some(x => Date.parse(x.publishedAt) < cutoff);
         let done;
         if (source === 'onliner') done = !batch.items.length || page >= batch.lastPage || older;
+        else if (source.startsWith('realt-')) done = !batch.items.length || page >= (state.cursor ? Number(state.cursor) : batch.lastPage);
         else if (source === 'realt') done = !batch.items.length || page + 1 > Math.ceil(batch.total / 30) - 2;
         else done = !batch.items.length || batch.items.every(x => Date.parse(x.publishedAt) < cutoff) || !batch.next;
         if (!done && ((source === 'onliner' && page >= 30) || page >= 100)) {
@@ -194,9 +207,9 @@ export class ApartmentScan extends WorkflowEntrypoint {
             .bind(runId, source, sourceFailure('page limit')).run());
           done = true;
         }
-        const next = done ? ({ onliner: 'realt', realt: 'kufar', kufar: 'send' })[source] : source;
+        const next = done ? nextSource(source) : source;
         const nextPage = done ? 1 : page + 1;
-        const nextCursor = !done && source === 'kufar' ? batch.next : null;
+        const nextCursor = done ? null : source === 'kufar' ? batch.next : source.startsWith('realt-') ? (state.cursor || String(batch.lastPage)) : null;
         await step.do(`save-${source}-${page}`, () => env.DB.batch([
           ...candidates.map(x => env.DB.prepare(`INSERT OR IGNORE INTO pending(run_id,key,published_at,item)
             VALUES (?,?,?,?)`).bind(runId, x.key, x.publishedAt, JSON.stringify(x))),
@@ -218,7 +231,7 @@ export class ApartmentScan extends WorkflowEntrypoint {
         (await env.DB.prepare('SELECT source,reason FROM scan_errors WHERE run_id=? ORDER BY source').bind(runId).all()).results);
       if (!state.header_sent) {
         const total = await step.do('count-pending', count);
-        const heading = scanHeading(label(state.start, state.end), total, failures);
+        const heading = scanHeading(label(state.start, state.end), total, failures, selected.propertyType);
         const headerSent = await step.do('send-header', async () => {
           if (await shouldStop()) return false;
           await telegram(env, 'sendMessage', { chat_id: env.TELEGRAM_CHAT_ID, text: heading, reply_markup: await chatKeyboard(env) });
@@ -251,8 +264,8 @@ export class ApartmentScan extends WorkflowEntrypoint {
       if (await shouldStop()) return { paused: true };
       await step.do('finish', () => env.DB.batch([
         ...(!failures.length ? [env.DB.prepare(`INSERT INTO meta(key,value) VALUES (?,?)
-          ON CONFLICT(key) DO UPDATE SET value=excluded.value`).bind(cursorKey(chatId), state.end)] :
-          [env.DB.prepare('INSERT OR IGNORE INTO meta(key,value) VALUES (?,?)').bind(cursorKey(chatId), state.start)]),
+          ON CONFLICT(key) DO UPDATE SET value=excluded.value`).bind(cursorKey(chatId, selected.propertyType), state.end)] :
+          [env.DB.prepare('INSERT OR IGNORE INTO meta(key,value) VALUES (?,?)').bind(cursorKey(chatId, selected.propertyType), state.start)]),
         env.DB.prepare('DELETE FROM pending WHERE run_id=?').bind(runId),
         env.DB.prepare('DELETE FROM scan_runs WHERE id=?').bind(runId),
         env.DB.prepare('DELETE FROM scan_preferences WHERE run_id=?').bind(runId),
@@ -317,7 +330,7 @@ export default {
           return Response.json({ ok: true });
         }
         const instance = await env.SCAN.create({ params: { chatId: env.TELEGRAM_CHAT_ID, kind: 'check', requestedAt: Date.now() } });
-        await telegram(env, 'answerCallbackQuery', { callback_query_id: callback.id, text: 'Проверяю новые квартиры…' });
+        await telegram(env, 'answerCallbackQuery', { callback_query_id: callback.id, text: 'Проверяю новые объявления…' });
         return Response.json({ ok: true, id: instance.id });
       }
       if (data.startsWith('prefs:')) {
@@ -522,7 +535,7 @@ export default {
       }
       const instance = await env.SCAN.create({ params: { chatId: env.TELEGRAM_CHAT_ID, kind: 'check', requestedAt: Date.now() } });
       await telegram(env, 'sendMessage', { chat_id: env.TELEGRAM_CHAT_ID,
-        text: 'Проверяю новые квартиры…', reply_markup: await chatKeyboard(env) });
+        text: 'Проверяю новые объявления…', reply_markup: await chatKeyboard(env) });
       return Response.json({ ok: true, id: instance.id });
     } else if ([SETTINGS_BUTTON, OLD_SETTINGS_BUTTON, '/settings'].includes(update.message?.text)) {
       await showMenu(env, 'home');

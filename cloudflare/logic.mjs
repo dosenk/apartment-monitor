@@ -1,3 +1,4 @@
+import { commercialMatches, commercialArea, commercialPrice } from './commercial.mjs';
 import { matchesMetro } from './metro.mjs';
 import { matchesDistrict, matchesCityDistrict } from './districts.mjs';
 import { selectedCity, cityName } from './location.mjs';
@@ -48,7 +49,9 @@ export function distanceKm(lat1, lon1, lat2, lon2) {
 export function matches(item, start, end, selected) {
   selected = preferences(selected);
   const time = Date.parse(item.publishedAt);
-  const maxByn = preferencesPrice(selected);
+  const commercial = selected.propertyType === 'commercial';
+  const maxByn = commercial ? null : preferencesPrice(selected);
+  if (commercial ? !commercialMatches(item, selected) : item.propertyType === 'commercial') return false;
   const cityIndex = selectedCity(item, selected);
   const inMinsk = cityName(cityIndex) === 'Минск';
   return Number.isFinite(time) && time >= Date.parse(start) && time < Date.parse(end) &&
@@ -165,6 +168,11 @@ export function escapeHtml(value) {
 }
 
 export function caption(item) {
+  if (item.propertyType === 'commercial') return `🏢 Коммерческая · ${escapeHtml(commercialArea(item))} · ${escapeHtml(item.key.split(':')[0])}\n` +
+    `📍 ${escapeHtml(String(item.address).slice(0, 220))}\n` +
+    (item.metroNames?.length ? `🚇 ${escapeHtml(item.metroNames.join(', '))}\n` : '') +
+    `Отделка: ${escapeHtml(item.finishLabel || 'Не указана')}\n💰 ${escapeHtml(commercialPrice(item))}\n🔗 ${escapeHtml(item.url)}`;
+
   return `🏠 ${item.rooms || "?"} комн. · ${escapeHtml(item.key.split(":")[0])}\n` +
     `📍 ${escapeHtml(item.address)}\n💰 $${item.usd} / ${item.byn} BYN в месяц\n` +
     `🔗 ${escapeHtml(item.url)}`;

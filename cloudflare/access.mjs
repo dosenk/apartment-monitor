@@ -2,7 +2,7 @@ import { telegram } from './telegram-api.mjs';
 
 export const scope = (env, chatId) => ({ ...env, TELEGRAM_CHAT_ID: String(chatId) });
 export const scanLock = chatId => `scan:${chatId}`;
-export const cursorKey = chatId => `covered_until:${chatId}`;
+export const cursorKey = (chatId, propertyType = 'apartments') => `covered_until:${chatId}${propertyType === 'commercial' ? ':commercial' : ''}`;
 
 export const pauseKey = chatId => `schedule_paused:${chatId}`;
 export async function schedulePaused(env, chatId = env.TELEGRAM_CHAT_ID) {
