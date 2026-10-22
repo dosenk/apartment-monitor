@@ -4,6 +4,7 @@ export const COMMERCIAL_FINISHES = ['any', 'finished', 'unfinished'];
 export const scanSources = selected => selected.propertyType === 'commercial'
   ? [...REALT_COMMERCIAL.map(slug => `realt-${slug}`), 'kufar'] : ['onliner', 'realt', 'kufar'];
 const positive = v => v !== null && v !== '' && Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : null;
+const metroNames = names => (Array.isArray(names) ? names : names ? [names] : []).flatMap(name => String(name).replace(/\s*\(\d{4}\)/g, '').split(/\s*[()]\s*/).filter(Boolean));
 const coordinate = v => v != null && Number.isFinite(Number(v)) ? Number(v) : null;
 const repairNames = { 2: 'Хорошее состояние', 3: 'Нормальное состояние', 5: 'Плохое состояние', 7: 'Без отделки', 8: 'Строительная отделка' };
 const kufarRepairNames = { 1: 'Офисная отделка', 5: 'Под чистовую отделку', 10: 'Требуется капитальный ремонт', 15: 'Требуется косметический ремонт' };
@@ -43,7 +44,7 @@ export function commercialRealt(raw, slug = 'offices') {
         pricePerM2Byn: money('pricePerM2', 'priceRatesPerM2', '933'),
         pricePerM2Usd: money('pricePerM2', 'priceRatesPerM2', '840'),
         publishedAt: x.createdAt, photo: typeof x.images?.[0] === 'string' ? x.images[0] : null,
-        metroNames: x.metroStationName ? [x.metroStationName] : [],
+        metroNames: metroNames(x.metroStationName),
       }];
     }), total,
     lastPage: Math.max(1, 1 + Math.ceil(Math.max(0, total - perPage * multiplier) / perPage)),
@@ -73,7 +74,7 @@ export function commercialKufar(data) {
       pricePerM2Usd: positive(x.calculator?.find(v => v.currency === 'USD')?.price_per_meter) === null ? null : Number(x.calculator.find(v => v.currency === 'USD').price_per_meter) / 100,
       publishedAt: x.list_time,
       photo: first?.media_storage === 'rms' && /^adim1\/[\w./-]+\.jpe?g$/i.test(first.path) ? `https://rms.kufar.by/v1/gallery/${first.path}` : null,
-      metroNames: Array.isArray(metro) ? metro : metro ? [metro] : [],
+      metroNames: metroNames(metro),
     }];
   }), next: data.pagination.pages.find(p => p.label === 'next')?.token || null };
 }

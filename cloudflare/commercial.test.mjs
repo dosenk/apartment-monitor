@@ -17,6 +17,8 @@ test('commercial parsers preserve unknown prices, partial areas, original repair
   assert.equal(commercialRealt(html([{...object,code:43}]),'storages').items[0].url,'https://realt.by/rent-pomeschenie/object/43/');
   assert.equal(commercialRealt(html([{...object,code:43}]),'production').items[0].url,'https://realt.by/rent-proizvodstvo/object/43/');
   const k=commercialKufar({ads:[ad,{...ad,ad_id:25,category:1010}],pagination:{pages:[]}}).items;
+  const interchange=commercialKufar({ads:[{...ad,ad_parameters:[{p:'metro',vl:['Фрунзенская (Юбилейная площадь)']}]}],pagination:{pages:[]}}).items[0];
+  assert.deepEqual(interchange.metroNames,['Фрунзенская','Юбилейная площадь']);
   assert.equal(k.length,1);assert.equal(k[0].finish,'unknown');assert.equal(k[0].finishLabel,'Требуется косметический ремонт');assert.equal(k[0].latitude,null);assert.match(caption(k[0]),/Цена по запросу/);
 });
 test('commercial ranges overlap, any finish includes unknown repair, apartment budgets and Onliner cannot leak in',()=>{

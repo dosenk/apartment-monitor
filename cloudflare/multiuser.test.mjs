@@ -242,3 +242,20 @@ test('commercial workflow scans only Kufar and all Realt commercial categories w
   assert.equal(sql.prepare('SELECT value FROM meta WHERE key=?').get(cursorKey('123')).value,'2026-10-22T10:30:00.000Z');
   assert.equal(sql.prepare('SELECT value FROM meta WHERE key=?').get(cursorKey('123','commercial')).value,'2026-10-22T10:50:00.000Z');
 });
+
+test('commercial pagination retains the first-page limit across pages with different page sizes',async t=>{
+ const {DB,sql}=database();t.after(()=>sql.close());const requests=[];
+ t.mock.method(globalThis,'fetch',async(url,options)=>{
+  if(url.includes('api.telegram.org'))return Response.json({ok:true,result:{}});
+  requests.push(url);
+  if(url.includes('api.kufar.by'))return Response.json({ads:[],pagination:{pages:[]}});
+  const page=Number(new URL(url).searchParams.get('page')||1);
+  // First page contains four normal pages; subsequent pages report multiplier 1.
+  return new Response('<script id="__NEXT_DATA__">'+JSON.stringify({props:{pageProps:{objects:[{code:page,townName:'Минск',createdAt:'2026-10-21T00:00:00Z'}],pagination:{page,pageSize:page===1?120:30,totalCount:125},firstPageSizeMultiplier:page===1?4:1}}})+'</script>');
+ });
+ const city=CITIES.findIndex(row=>row[0]==='Минск');
+ sql.prepare('INSERT INTO search_preferences VALUES (?,?)').run('123',JSON.stringify({propertyType:'commercial',cities:[city]}));
+ const result=await new ApartmentScan({}, {DB,TELEGRAM_CHAT_ID:'123',TELEGRAM_BOT_TOKEN:'test'}).run({instanceId:'pagination',payload:{chatId:'123',kind:'check',requestedAt:Date.parse('2026-10-22T10:50:00Z')}},{do:async(_, ...args)=>args.at(-1)(),sleep:async()=>{}});
+ assert.equal(result.delivered,true);assert.equal(requests.length,15);assert.equal(requests.filter(u=>new URL(u).searchParams.get('page')==='2').length,7);
+ assert.ok(requests.every(u=>Number(new URL(u).searchParams.get('page')||1)<=2));
+});

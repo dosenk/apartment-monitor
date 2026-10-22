@@ -198,7 +198,7 @@ export class ApartmentScan extends WorkflowEntrypoint {
         const older = batch.items.some(x => Date.parse(x.publishedAt) < cutoff);
         let done;
         if (source === 'onliner') done = !batch.items.length || page >= batch.lastPage || older;
-        else if (source.startsWith('realt-')) done = !batch.items.length || page >= batch.lastPage;
+        else if (source.startsWith('realt-')) done = !batch.items.length || page >= (state.cursor ? Number(state.cursor) : batch.lastPage);
         else if (source === 'realt') done = !batch.items.length || page + 1 > Math.ceil(batch.total / 30) - 2;
         else done = !batch.items.length || batch.items.every(x => Date.parse(x.publishedAt) < cutoff) || !batch.next;
         if (!done && ((source === 'onliner' && page >= 30) || page >= 100)) {
@@ -209,7 +209,7 @@ export class ApartmentScan extends WorkflowEntrypoint {
         }
         const next = done ? nextSource(source) : source;
         const nextPage = done ? 1 : page + 1;
-        const nextCursor = !done && source === 'kufar' ? batch.next : null;
+        const nextCursor = done ? null : source === 'kufar' ? batch.next : source.startsWith('realt-') ? (state.cursor || String(batch.lastPage)) : null;
         await step.do(`save-${source}-${page}`, () => env.DB.batch([
           ...candidates.map(x => env.DB.prepare(`INSERT OR IGNORE INTO pending(run_id,key,published_at,item)
             VALUES (?,?,?,?)`).bind(runId, x.key, x.publishedAt, JSON.stringify(x))),
