@@ -1,0 +1,67 @@
+name: Verify owner listing recovery
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/verify-listing-recovery.yml']
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+    steps:
+      - name: Start owner check and verify completed coverage without exposing private data
+        run: |
+          python -u - <<'PY'
+          import json, os, hashlib, hmac, time, urllib.request, urllib.parse
+          account=os.environ['CLOUDFLARE_ACCOUNT_ID']
+          token=os.environ['CLOUDFLARE_API_TOKEN']
+          bot=os.environ['TELEGRAM_BOT_TOKEN']
+          owner=os.environ['TELEGRAM_CHAT_ID'].strip()
+          base=f'https://api.cloudflare.com/client/v4/accounts/{account}'
+          def cf(path,payload=None):
+              request=urllib.request.Request(base+path,data=None if payload is None else json.dumps(payload).encode(),headers={'Authorization':f'Bearer {token}','Content-Type':'application/json'})
+              with urllib.request.urlopen(request,timeout=40) as response: data=json.load(response)
+              assert data['success']
+              return data['result']
+          domain=cf('/workers/subdomain')['subdomain']
+          url=f'https://apartment-monitor-bot.{domain}.workers.dev'
+          fields={'auth_date':str(int(time.time())),'user':json.dumps({'id':int(owner)})}
+          secret=hmac.new(b'WebAppData',bot.encode(),hashlib.sha256).digest()
+          fields['hash']=hmac.new(secret,'\n'.join(k+'='+fields[k] for k in sorted(fields)).encode(),hashlib.sha256).hexdigest()
+          init=urllib.parse.urlencode(fields)
+          def api(path):
+              request=urllib.request.Request(url+'/api/'+path,data=json.dumps({'initData':init}).encode(),headers={'Content-Type':'application/json','User-Agent':'Mozilla/5.0 (compatible; ApartmentMonitor/1.0)'})
+              with urllib.request.urlopen(request,timeout=40) as response:return json.load(response)
+          session=api('session')
+          if not session.get('configured'):
+              print('Verification skipped: search is not configured')
+              raise SystemExit(0)
+          db=next(d['uuid'] for d in cf('/d1/database?name=apartment-monitor-state&per_page=100') if d['name']=='apartment-monitor-state')
+          def sql(query,params):return cf('/d1/database/'+db+'/query',{'sql':query,'params':params})[0].get('results',[])
+          key='covered_until:'+owner+(':commercial' if session['settings'].get('propertyType')=='commercial' else '')
+          def cursor():
+              rows=sql('SELECT value FROM meta WHERE key=?',[key])
+              return rows[0]['value'] if rows else None
+          before=cursor()
+          result=api('check')
+          print('Owner verification accepted:',result.get('ok',False))
+          restart=bool(result.get('running'))
+          for attempt in range(150):
+              time.sleep(6)
+              rows=sql('SELECT expires FROM locks WHERE name=?',['scan:'+owner])
+              locked=bool(rows and rows[0]['expires']>time.time()*1000)
+              if cursor()!=before and not locked:
+                  print('Owner scan finished and complete coverage advanced:',True)
+                  raise SystemExit(0)
+              if restart and not locked and attempt>2:
+                  api('check')
+                  restart=False
+          print('Owner scan finished and complete coverage advanced:',False)
+          raise SystemExit(1)
+          PY
