@@ -10,10 +10,17 @@ export function sourceFailure(error) {
   return 'ошибка получения данных';
 }
 
-export function scanHeading(period, total, failures, propertyType = 'apartments') {
-  const names = { onliner: 'Onliner', realt: 'Realt', kufar: 'Kufar' };
+export function scanHeading(period, total, failures, propertyType = 'apartments', automatic = true) {
+  const grouped = new Map();
+  for (const entry of failures) {
+    const name = entry.source === 'kufar' ? 'Kufar' : entry.source === 'onliner' ? 'Onliner' : entry.source === 'realt' || entry.source?.startsWith('realt-') ? 'Realt' : 'Площадка';
+    const key = `${name}: ${entry.reason}`;
+    grouped.set(key, (grouped.get(key) || 0) + 1);
+  }
+  const lines = [...grouped].map(([message, count]) => message + (count > 1 ? ` (${count} разделов)` : ''));
   return `${propertyType === 'commercial' ? '🏢 Коммерческая недвижимость' : '🏠 Квартиры'} за период ${period}\n` +
     (total ? `Новых объявлений: ${total}` : failures.length ? 'В доступных данных новых объявлений нет' : 'Новых объявлений нет') +
-    (failures.length ? '\n\n⚠️ Проверка неполная:\n' + failures.map(x => `${names[x.source] || (x.source?.startsWith('realt-') ? 'Realt (' + ({ offices: 'офисы', shops: 'торговые помещения', warehouses: 'склады', storages: 'свободные помещения', services: 'услуги', production: 'производство', 'restorant-cafe': 'общепит' }[x.source.slice(6)] || 'коммерция') + ')' : 'Площадка')}: ${x.reason}`).join('\n') +
-      '\nПовторю проверку по расписанию. Период сохранён для повторной проверки; присланные объявления не повторятся.' : '');
+    (failures.length ? '\n\n⚠️ Проверка неполная:\n' + lines.join('\n') +
+      (automatic ? '\nПовторю проверку по расписанию.' : '\nПовторите проверку кнопкой «Проверить».') +
+      ' Период сохранён для повторной проверки; присланные объявления не повторятся.' : '');
 }

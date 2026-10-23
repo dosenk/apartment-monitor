@@ -120,4 +120,16 @@ jobs:
               assert 'catalog' in session and 'settings' in session
           print('Mini App assets, signed owner session, password gate and Telegram menu verified')
           print('Worker health verified and Telegram webhook configured:', url)
+          import time
+          for source in ['kufar', 'realt-offices', 'realt-shops', 'realt-warehouses', 'realt-storages', 'realt-services', 'realt-production', 'realt-restorant-cafe']:
+              request = urllib.request.Request(url + '/internal/source-health',
+                  data=json.dumps({'source': source}).encode(), headers={**ua, 'Content-Type': 'application/json',
+                      'X-Telegram-Bot-Api-Secret-Token': hashlib.sha256(bot.encode()).hexdigest()})
+              try:
+                  with urllib.request.urlopen(request, timeout=60) as response:
+                      check = json.load(response)
+                  print('Listing source:', source, 'available:', check.get('available'), 'transport:', check.get('transport'), 'status:', check.get('status'), 'reason:', check.get('reason'))
+              except urllib.error.HTTPError as error:
+                  print('Listing diagnostic endpoint HTTP:', error.code)
+              time.sleep(3)
           PY

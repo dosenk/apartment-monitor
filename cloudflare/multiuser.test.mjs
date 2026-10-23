@@ -259,3 +259,47 @@ test('commercial pagination retains the first-page limit across pages with diffe
  assert.equal(result.delivered,true);assert.equal(requests.length,15);assert.equal(requests.filter(u=>new URL(u).searchParams.get('page')==='2').length,7);
  assert.ok(requests.every(u=>Number(new URL(u).searchParams.get('page')||1)<=2));
 });
+
+test('Kufar public-web recovery delivers listings and safely continues web pagination after API 403',async t=>{
+ const {DB,sql}=database();t.after(()=>sql.close());const messages=[],requests=[],sleeps=[];
+ const item={category:1050,type:'let',ad_id:777,ad_link:'https://re.kufar.by/vi/777',list_time:'2026-10-23T10:00:00Z',ad_parameters:[{p:'region',vl:'Минск'},{p:'size',v:80}]};
+ t.mock.method(globalThis,'fetch',async(url,options)=>{
+  url=String(url);if(url.includes('api.telegram.org')){messages.push(JSON.parse(options.body));return Response.json({ok:true,result:{}});}
+  requests.push(url);
+  if(url.includes('api.kufar.by'))return new Response('',{status:403});
+  if(url.includes('re.kufar.by'))return new Response('<script id="__NEXT_DATA__">'+JSON.stringify({props:{initialState:{listing:{ads:new URL(url).searchParams.has('cursor')?[]:[item],pagination:new URL(url).searchParams.has('cursor')?[]:[{label:'next',token:'page-two'}]}}}})+'</script>');
+  return new Response('<script id="__NEXT_DATA__">'+JSON.stringify({props:{pageProps:{objects:[],pagination:{page:1,pageSize:30,totalCount:0}}}})+'</script>');
+ });
+ const city=CITIES.findIndex(row=>row[0]==='Минск');sql.prepare('INSERT INTO search_preferences VALUES (?,?)').run('123',JSON.stringify({cities:[city],propertyType:'commercial',areaMin:70,areaMax:90}));
+ const result=await new ApartmentScan({}, {DB,TELEGRAM_CHAT_ID:'123',TELEGRAM_BOT_TOKEN:'test'}).run({instanceId:'web-recovery',payload:{chatId:'123',kind:'check',requestedAt:Date.parse('2026-10-23T10:50:00Z')}},{do:async(_, ...args)=>args.at(-1)(),sleep:async(name)=>sleeps.push(name)});
+ assert.equal(result.partial,false);assert.ok(messages.some(m=>m.text?.includes(item.ad_link)));assert.equal(requests.filter(u=>u.includes('api.kufar.by')).length,1);assert.equal(requests.filter(u=>u.includes('re.kufar.by')).length,2);assert.equal(sleeps.filter(s=>s.startsWith('source-pace-')).length,9);
+ assert.equal(sql.prepare('SELECT value FROM meta WHERE key=?').get(cursorKey('123','commercial')).value,'2026-10-23T10:50:00.000Z');
+});
+
+test('repeated identical automatic outage warnings are quiet while manual checks and recovery stay visible',async t=>{
+ const {DB,sql}=database();t.after(()=>sql.close());const messages=[];let blocked=true;
+ t.mock.method(globalThis,'fetch',async(url,options)=>{
+  url=String(url);if(url.includes('api.telegram.org')){messages.push(JSON.parse(options.body));return Response.json({ok:true,result:{}});}
+  if(url.includes('onliner.by'))return Response.json({apartments:[],page:{last:1}});
+  if(url.includes('kufar.by'))return blocked?new Response('',{status:403}):Response.json({ads:[],pagination:{pages:[]}});
+  return new Response('<script id="__NEXT_DATA__">'+JSON.stringify({props:{pageProps:{objects:[],pagination:{totalCount:0}}}})+'</script>');
+ });
+ const city=CITIES.findIndex(row=>row[0]==='Минск');sql.prepare('INSERT INTO search_preferences VALUES (?,?)').run('123',JSON.stringify({cities:[city],frequency:'30m'}));sql.prepare('INSERT INTO meta VALUES (?,?)').run(cursorKey('123'),'2026-10-23T09:00:00.000Z');
+ const env={DB,TELEGRAM_CHAT_ID:'123',TELEGRAM_BOT_TOKEN:'test'},step={do:async(_, ...args)=>args.at(-1)(),sleep:async()=>{}};
+ const run=(id,automatic)=>new ApartmentScan({},env).run({instanceId:id,payload:{chatId:'123',kind:'check',automatic,requestedAt:Date.parse('2026-10-23T10:50:00Z')}},step);
+ assert.equal((await run('one',true)).partial,true);assert.equal(messages.length,1);
+ assert.equal((await run('two',true)).partial,true);assert.equal(messages.length,1);
+ assert.equal(sql.prepare('SELECT value FROM meta WHERE key=?').get(cursorKey('123')).value,'2026-10-23T09:00:00.000Z');
+ await run('manual',false);assert.equal(messages.length,2);assert.match(messages[1].text,/Повторите проверку кнопкой/);
+ blocked=false;assert.equal((await run('recovered',true)).partial,false);assert.equal(messages.length,3);assert.doesNotMatch(messages[2].text,/Проверка неполная/);
+});
+
+test('source diagnostics require the internal secret and reject arbitrary destinations',async t=>{
+ const {DB,sql}=database();t.after(()=>sql.close());let requests=0;
+ t.mock.method(globalThis,'fetch',async()=>{requests++;return Response.json({ads:[],pagination:{pages:[]}});});
+ const request=(headers,source)=>new Request('https://worker.test/internal/source-health',{method:'POST',headers,body:JSON.stringify({source})});
+ const env={DB,WEBHOOK_SECRET:'secret'};
+ assert.equal((await worker.fetch(request({},'kufar'),env)).status,403);
+ assert.equal((await worker.fetch(request({'X-Telegram-Bot-Api-Secret-Token':'secret'},'https://evil.test'),env)).status,400);assert.equal(requests,0);
+ const response=await worker.fetch(request({'X-Telegram-Bot-Api-Secret-Token':'secret'},'kufar'),env);assert.equal((await response.json()).available,true);assert.equal(requests,1);
+});
