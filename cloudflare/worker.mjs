@@ -1,4 +1,5 @@
-import { scanSources, commercialRealt, commercialKufar } from './commercial.mjs';
+import { fetchListing, sourceHealth } from './source-client.mjs';
+import { scanSources, REALT_COMMERCIAL, commercialRealt, commercialKufar } from './commercial.mjs';
 import { miniApi } from './mini-app.mjs';
 import { WorkflowEntrypoint } from 'cloudflare:workers';
 import { telegram } from './telegram-api.mjs';
@@ -11,7 +12,6 @@ import { CITIES } from './geography.mjs';
 import { OBLASTS, rayons, isMinskSelected } from './location.mjs';
 import { SETTINGS_BUTTON, OLD_SETTINGS_BUTTON, CHECK_BUTTON, HELP_BUTTON, CURRENT_BUTTON, PAUSE_BUTTON, RESUME_BUTTON, keyboardFor, menu, settingsSummary } from './telegram-menu.mjs';
 
-const AGENT = 'ApartmentMonitor/1.0 (personal rental alerts)';
 const chatKeyboard = async env => keyboardFor(await schedulePaused(env));
 
 async function readActive(env) {
@@ -57,18 +57,6 @@ async function showMenu(env, screen, messageId) {
     reply_markup: { inline_keyboard: view.inline_keyboard } };
   if (messageId) await telegram(env, 'editMessageText', { ...payload, message_id: messageId });
   else await telegram(env, 'sendMessage', payload);
-}
-
-async function fetchPage(url, parser, isHtml = false) {
-  const headers = new URL(url).hostname === 'api.kufar.by' ?
-    { 'User-Agent': 'Mozilla/5.0 Chrome/131.0 Safari/537.36', Accept: 'application/json', Referer: 'https://re.kufar.by/' } :
-    { 'User-Agent': AGENT, Accept: 'application/json,text/html' };
-  const response = await fetch(url, { headers, signal: AbortSignal.timeout(25000) });
-  if (!response.ok) {
-    const detail = (await response.text()).replace(/\s+/g, ' ').slice(0, 240);
-    throw Error(`Source HTTP ${response.status}: ${new URL(url).hostname}; server=${response.headers.get('server')}; type=${response.headers.get('content-type')}; detail=${detail}`);
-  }
-  return parser(isHtml || parser === realt ? await response.text() : await response.json());
 }
 
 
@@ -179,9 +167,21 @@ export class ApartmentScan extends WorkflowEntrypoint {
           url = `https://api.kufar.by/search-api/v2/search/rendered-paginated?${params}`;
           parser = selected.propertyType === 'commercial' ? commercialKufar : kufar;
         } else throw Error(`Unknown source ${source}`);
+        const cooldownKey = `source_cooldown:${source.startsWith('realt') ? 'realt' : source}`;
+        await step.sleep(`source-pace-${source}-${page}`, '3 seconds');
         let batch;
         try {
-          batch = await step.do(`fetch-${source}-${page}`, { retries: { limit: 2, delay: '10 seconds', backoff: 'exponential' }, timeout: '30 seconds' }, () => fetchPage(url, parser, isHtml));
+          batch = await step.do(`fetch-${source}-${page}`, { retries: { limit: 1, delay: '30 seconds', backoff: 'exponential' }, timeout: '60 seconds' }, async () => {
+            const savedCooldown = await env.DB.prepare('SELECT value FROM meta WHERE key=?').bind(cooldownKey).first();
+            let cooldown;
+            try { cooldown = JSON.parse(savedCooldown?.value || 'null'); } catch { cooldown = null; }
+            if (cooldown?.until > Date.now()) return { unavailable: { status: cooldown.status } };
+            const result = await fetchListing(url, parser, isHtml || parser === realt);
+            if (result.unavailable?.retryAfter) await env.DB.prepare(`INSERT INTO meta(key,value) VALUES (?,?)
+              ON CONFLICT(key) DO UPDATE SET value=excluded.value`).bind(cooldownKey, JSON.stringify({ until: Date.now() + result.unavailable.retryAfter, status: result.unavailable.status })).run();
+            return result;
+          });
+          if (batch.unavailable) throw Error(`Source HTTP ${batch.unavailable.status}`);
         } catch (error) {
           const reason = sourceFailure(error);
           console.warn('Apartment source unavailable', source, reason);
@@ -231,10 +231,21 @@ export class ApartmentScan extends WorkflowEntrypoint {
         (await env.DB.prepare('SELECT source,reason FROM scan_errors WHERE run_id=? ORDER BY source').bind(runId).all()).results);
       if (!state.header_sent) {
         const total = await step.do('count-pending', count);
-        const heading = scanHeading(label(state.start, state.end), total, failures, selected.propertyType);
+        const heading = scanHeading(label(state.start, state.end), total, failures, selected.propertyType, automatic);
         const headerSent = await step.do('send-header', async () => {
           if (await shouldStop()) return false;
-          await telegram(env, 'sendMessage', { chat_id: env.TELEGRAM_CHAT_ID, text: heading, reply_markup: await chatKeyboard(env) });
+          const noticeKey = `outage_notice:${chatId}:${selected.propertyType}`;
+          const signature = JSON.stringify(failures.map(x => [x.source, x.reason]));
+          const row = await env.DB.prepare('SELECT value FROM meta WHERE key=?').bind(noticeKey).first();
+          let previous;
+          try { previous = JSON.parse(row?.value || 'null'); } catch { previous = null; }
+          const repeated = automatic && !total && failures.length && previous?.signature === signature && Date.now() - previous.at < 6 * 3600000;
+          if (!repeated) {
+            await telegram(env, 'sendMessage', { chat_id: env.TELEGRAM_CHAT_ID, text: heading, reply_markup: await chatKeyboard(env) });
+            if (failures.length) await env.DB.prepare(`INSERT INTO meta(key,value) VALUES (?,?)
+              ON CONFLICT(key) DO UPDATE SET value=excluded.value`).bind(noticeKey, JSON.stringify({ signature, at: Date.now() })).run();
+          }
+          if (!failures.length) await env.DB.prepare('DELETE FROM meta WHERE key=?').bind(noticeKey).run();
           await env.DB.prepare('UPDATE scan_runs SET header_sent=1 WHERE id=?').bind(runId).run();
           return true;
         });
@@ -303,6 +314,15 @@ export default {
   async fetch(request, bindings) {
     let env = bindings;
     const url = new URL(request.url);
+    if (url.pathname === '/internal/source-health' && request.method === 'POST') {
+      if (!env.WEBHOOK_SECRET?.trim() || request.headers.get('X-Telegram-Bot-Api-Secret-Token') !== env.WEBHOOK_SECRET.trim()) return new Response('Forbidden', { status: 403 });
+      try {
+        const { source } = await request.json();
+        const result = await sourceHealth(String(source || ''), { kufar: commercialKufar, realt: commercialRealt, categories: REALT_COMMERCIAL });
+        if (!result) return Response.json({ error: 'Unknown source' }, { status: 400 });
+        return Response.json({ source, available: !result.unavailable, transport: result.transport || result.unavailable?.transport, count: result.items?.length || 0, status: result.unavailable?.status || 200 }, { headers: { 'Cache-Control': 'no-store' } });
+      } catch (error) { return Response.json({ available: false, reason: sourceFailure(error) }, { headers: { 'Cache-Control': 'no-store' } }); }
+    }
     if (url.pathname.startsWith('/api/')) return miniApi(request, env);
     if (url.pathname.startsWith('/app')) return env.ASSETS ? env.ASSETS.fetch(request) : new Response('Not found', { status: 404 });
     if (url.pathname === '/health' && request.method === 'GET') return Response.json({ ok: true, multi_user: true, login_ready: Boolean(env.BOT_ACCESS_PASSWORD) });
